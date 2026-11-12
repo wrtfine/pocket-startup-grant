@@ -1588,11 +1588,10 @@
     .company-status-table .status-number { width: 48px; text-align: center; color: #8a959d; }
     .company-status-table th.status-registration-heading { width: 200px; }
     .company-status-table th.status-quota-heading { width: 116px; }
-    .company-status-table th:last-child { width: 100px; }
     .company-status-table .status-registration { white-space: nowrap; }
     .status-registration.unknown,
     .status-elapsed { color: #8a959d; }
-    .status-company-label { display: flex; align-items: center; gap: 7px; }
+    .status-company-label { display: flex; align-items: center; flex-wrap: wrap; gap: 4px 7px; }
     .status-company-label > span:first-child { min-width: 0; overflow-wrap: anywhere; }
     .status-round-badge {
       display: inline-flex;
@@ -1613,7 +1612,8 @@
     .company-status-table tbody tr.status-secondary:hover { background: #eef0f2; }
     .company-status-table tr.status-secondary-start td { border-top: 7px solid #ffffff; }
     .status-company-type { flex: 0 0 auto; color: #77828a; font-size: 11px; white-space: nowrap; }
-    .company-status-table .status-remaining { font-weight: 600; color: #172026; white-space: nowrap; }
+    .company-status-table .status-remaining { flex: 0 0 auto; font-weight: 600; color: #172026; white-space: nowrap; }
+    .company-status-table .status-unlimited { flex: 0 0 auto; white-space: nowrap; }
     .company-status-table .status-remaining.none,
     .company-status-table .status-unlimited { color: #8a959d; font-weight: 400; }
     .company-status-table .status-empty { text-align: center; padding: 32px 12px; color: #8a959d; }
@@ -5028,7 +5028,7 @@
                   </select>
                 </div>
                 <table className="company-status-table" aria-label="현재 회차 지원사업 잔여 횟수">
-                  <thead><tr><th scope="col" className="status-number">순번</th><th scope="col" className="status-company-heading">기업</th><th scope="col" className="status-registration-heading">등록일</th><th scope="col" className="status-quota-heading">계약횟수/완료</th><th scope="col">남은 횟수</th></tr></thead>
+                  <thead><tr><th scope="col" className="status-number">순번</th><th scope="col" className="status-company-heading">기업</th><th scope="col" className="status-registration-heading">등록일</th><th scope="col" className="status-quota-heading">계약횟수/완료</th></tr></thead>
                   <tbody>
                     {statusCompanies.map((company, index) => {
                       const type = companyTypeValue(company);
@@ -5041,13 +5041,12 @@
                       const registeredDate = registrationDates.get(company.id) || "";
                       return <tr key={company.id} data-status-company-id={company.id} data-company-type={type} className={`${secondary ? "status-secondary" : ""} ${secondaryStart ? "status-secondary-start" : ""}`}>
                         <td className="status-number">{index + 1}</td>
-                        <td className="status-company-cell"><div className="status-company-label"><span>{company.name}</span><span className="status-round-badge" aria-label={roundLabel(company)}>{pocket ? "@" : Math.max(1, Number(company.round) || 1)}</span>{secondary && <span className="status-company-type">{COMPANY_TYPE_OPTIONS.find(option => option.value === type).label}</span>}</div></td>
+                        <td className="status-company-cell"><div className="status-company-label"><span>{company.name}</span><span className={pocket ? "status-unlimited" : `status-remaining ${remaining === 0 ? "none" : ""}`} aria-label={pocket ? "남은 횟수 제한 없음" : `남은 횟수 ${remaining}회`}>{pocket ? "제한 없음" : `남은 ${remaining}회`}</span><span className="status-round-badge" aria-label={roundLabel(company)}>{pocket ? "@" : Math.max(1, Number(company.round) || 1)}</span>{secondary && <span className="status-company-type">{COMPANY_TYPE_OPTIONS.find(option => option.value === type).label}</span>}</div></td>
                         <td className={`status-registration ${registeredDate ? "" : "unknown"}`}>{registeredDate || "확인 필요"}{registeredDate && <React.Fragment> <span className="status-elapsed">({registrationElapsedLabel(registeredDate, registrationToday)})</span></React.Fragment>}</td>
                         <td>{pocket ? "@/-" : `${target}/${done}`}</td>
-                        <td className={pocket ? "status-unlimited" : `status-remaining ${remaining === 0 ? "none" : ""}`}>{pocket ? "제한 없음" : `${remaining}회`}</td>
                       </tr>;
                     })}
-                    {!statusCompanies.length && <tr><td className="status-empty" colSpan="5">표시할 기업이 없습니다</td></tr>}
+                    {!statusCompanies.length && <tr><td className="status-empty" colSpan="4">표시할 기업이 없습니다</td></tr>}
                   </tbody>
                 </table>
               </section>
