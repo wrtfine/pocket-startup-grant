@@ -1542,7 +1542,7 @@
     }
     .company-status-table {
       width: 100%;
-      min-width: 560px;
+      min-width: 800px;
       border-collapse: separate;
       border-spacing: 0;
       table-layout: fixed;
@@ -1569,6 +1569,20 @@
     .company-status-table td:first-child { text-align: left; overflow-wrap: anywhere; }
     .company-status-table th:not(:first-child) { width: 82px; }
     .company-status-table th:last-child { width: 112px; }
+    .company-status-table th.status-registration-heading { width: 122px; }
+    .company-status-table th.status-elapsed-heading { width: 124px; }
+    .company-status-table .status-registration,
+    .company-status-table .status-elapsed { white-space: nowrap; }
+    .status-registration-btn {
+      padding: 0;
+      border: 0;
+      background: transparent;
+      color: inherit;
+      font: inherit;
+      cursor: pointer;
+    }
+    .status-registration-btn:hover { text-decoration: underline; text-underline-offset: 3px; }
+    .status-registration-btn.unknown { color: #8a959d; }
     .company-status-table tbody tr:hover { background: #fafbfc; }
     .company-status-table .status-remaining { font-weight: 600; color: #172026; white-space: nowrap; }
     .company-status-table .status-remaining.none,
@@ -2672,6 +2686,49 @@
       return new Date(year || new Date().getFullYear(), (month || 1) - 1, day || 1);
     }
     function todayKey() { return dateKey(new Date()); }
+    function registrationDateKey(value) {
+      if (!value) return "";
+      if (typeof value === "string" && /^\d{4}-\d{2}-\d{2}$/.test(value)) {
+        const date = new Date(`${value}T00:00:00Z`);
+        return Number.isFinite(date.getTime()) && date.toISOString().slice(0, 10) === value ? value : "";
+      }
+      const date = new Date(value);
+      if (!Number.isFinite(date.getTime())) return "";
+      const parts = new Intl.DateTimeFormat("en-US", { timeZone: "Asia/Seoul", year: "numeric", month: "2-digit", day: "2-digit" }).formatToParts(date);
+      const part = type => parts.find(item => item.type === type)?.value;
+      return `${part("year")}-${part("month")}-${part("day")}`;
+    }
+    function companyRegistrationDates(companies, logs) {
+      companies = Array.isArray(companies) ? companies.filter(Boolean) : [];
+      logs = Array.isArray(logs) ? logs.filter(Boolean) : [];
+      const result = new Map();
+      const byId = new Map(companies.map(company => [company.id, company]));
+      const byName = new Map();
+      for (const company of companies) {
+        const name = String(company.name || "").trim();
+        byName.set(name, byName.has(name) ? null : company);
+        const date = registrationDateKey(company.registeredDate) || registrationDateKey(company.createdAt) || registrationDateKey(company.registeredAt);
+        if (date) result.set(company.id, date);
+      }
+      const recovered = new Map();
+      for (const log of logs) {
+        if (log.undone) continue;
+        const creation = log.undo?.type === "saveCompany" && log.undo.isNew;
+        if (!creation && log.action !== "기업 추가") continue;
+        const id = log.undo?.company?.id;
+        const company = id ? byId.get(id) : byName.get(String(log.detail || "").trim());
+        const date = registrationDateKey(log.time);
+        if (!company || !date || result.has(company.id)) continue;
+        if (!recovered.has(company.id) || date < recovered.get(company.id)) recovered.set(company.id, date);
+      }
+      return new Map([...recovered, ...result]);
+    }
+    function registrationElapsedLabel(date, today) {
+      if (!date) return "-";
+      const days = Math.round((Date.parse(`${today}T00:00:00Z`) - Date.parse(`${date}T00:00:00Z`)) / 86400000);
+      if (days < 0) return "등록 예정";
+      return days === 0 ? "오늘 등록" : `${days}일 경과`;
+    }
     function addDaysKey(days) {
       const date = parseDateKey(todayKey());
       date.setDate(date.getDate() + days);
@@ -3779,6 +3836,7 @@
       const [companyStatusQuery, setCompanyStatusQuery] = useState("");
       const [showPastGrants, setShowPastGrants] = useState(false);
       const [boardDate, setBoardDate] = useState(todayKey);
+      const [registrationToday, setRegistrationToday] = useState(() => registrationDateKey(new Date()));
       const [manualSchedules, setSchedules] = useState([]);
       const [crmData, setCrmData] = useState(() => crmCore?.emptyState() || {});
       const [crmReady, setCrmReady] = useState(false);
@@ -3808,7 +3866,7 @@
       const saveRequestRef = useRef(0);
       const companyOrderKey = companyOrder.join("|");
       useEffect(() => {
-        const refreshDate = () => setBoardDate(todayKey());
+        const refreshDate = () => { setBoardDate(todayKey()); setRegistrationToday(registrationDateKey(new Date())); };
         const timer = window.setInterval(refreshDate, 60000);
         window.addEventListener("focus", refreshDate);
         document.addEventListener("visibilitychange", refreshDate);
@@ -3828,7 +3886,11 @@
         if ("scrollRestoration" in window.history) window.history.scrollRestoration = "manual";
         storageRead().then((saved) => {
           if (saved?.grants && saved?.companies) {
-            const normalizedCompanies = normalizeCompanyList(saved.companies);
+            const registrationDates = companyRegistrationDates(saved.companies, saved.logs || []);
+            const normalizedCompanies = normalizeCompanyList(saved.companies).map(company => {
+              const registeredDate = registrationDates.get(company.id);
+              return !company.registeredDate && registeredDate ? { ...company, registeredDate } : company;
+            });
             setGrants(saved.grants);
             setCompanies(confirmScheduledAssignments(normalizedCompanies, saved.schedules || []));
             setCompanyOrder(reconcileCompanyOrder(saved.companyOrder, normalizedCompanies));
@@ -3981,6 +4043,7 @@
         items: visibleGrants.filter((grant) => grantCategory(grant) === category)
       })), [visibleGrants]);
       const orderedCompanies = useMemo(() => orderCompaniesByIds(companies, companyOrder), [companies, companyOrder]);
+      const registrationDates = useMemo(() => companyRegistrationDates(companies, logs), [companies, logs]);
       const statusCompanies = useMemo(() => {
         const query = companyStatusQuery.trim().toLowerCase();
         return orderedCompanies.filter(company => !company.contractEnded && (!query || String(company.name || "").toLowerCase().includes(query)));
@@ -4455,13 +4518,15 @@
         setEditingGrant(null);
       }
       function saveCompany(form) {
+        const registeredDate = registrationDateKey(form.registeredDate);
+        if (form.registeredDate && (!registeredDate || registeredDate > registrationToday)) { notify("등록일을 확인해 주세요"); return; }
+        const previousCompany = companies.find((company) => company.id === form.id);
         const target = Math.max(1, Number(form.monthlyTarget || 1));
         const assignedGrantIds = form.assignedGrantIds || [];
         const assignmentStatuses = { ...(form.assignmentStatuses || {}) };
         assignedGrantIds.forEach((grantId) => { assignmentStatuses[grantId] = assignmentStatuses[grantId] || "request"; });
         const roundValue = form.round === "" || form.round === null || form.round === undefined ? 1 : Number(form.round);
-        const next = { ...form, id: form.id || uid("c"), age: undefined, round: Number.isNaN(roundValue) ? 1 : roundValue, monthlyTarget: target, monthlyDone: Math.min(Number(form.monthlyDone || 0), target), assignedGrantIds, assignmentStatuses };
-        const previousCompany = companies.find((company) => company.id === form.id);
+        const next = { ...form, id: form.id || uid("c"), createdAt: form.id ? previousCompany?.createdAt || form.createdAt || "" : new Date().toISOString(), registeredDate, age: undefined, round: Number.isNaN(roundValue) ? 1 : roundValue, monthlyTarget: target, monthlyDone: Math.min(Number(form.monthlyDone || 0), target), assignedGrantIds, assignmentStatuses };
         setCompanies((current) => form.id ? keepCompanyOrder(current, current.map((company) => company.id === next.id ? next : company)) : [next, ...current]);
         setCompanyOrder((current) => form.id ? current : [next.id, ...current.filter((id) => id !== next.id)]);
         setEditingCompany(null);
@@ -4911,19 +4976,23 @@
               <section className="company-status-panel" aria-label="기업 지원사업 현황">
                 <input className="company-status-search" aria-label="현황 기업 검색" placeholder="기업 검색" value={companyStatusQuery} onChange={event => setCompanyStatusQuery(event.target.value)} />
                 <table className="company-status-table" aria-label="현재 회차 지원사업 잔여 횟수">
-                  <thead><tr><th scope="col">기업</th><th scope="col">회차</th><th scope="col">계약 횟수</th><th scope="col">완료</th><th scope="col">남은 횟수</th></tr></thead>
+                  <thead><tr><th scope="col">기업</th><th scope="col" className="status-registration-heading">등록일</th><th scope="col" className="status-elapsed-heading">등록 후 경과</th><th scope="col">회차</th><th scope="col">계약 횟수</th><th scope="col">완료</th><th scope="col">남은 횟수</th></tr></thead>
                   <tbody>
                     {statusCompanies.map(company => {
                       const pocket = isPocketCompany(company);
                       const target = Math.max(1, Number(company.monthlyTarget) || 1);
                       const done = monthlyDoneCount(company, grantMap);
                       const remaining = Math.max(0, target - done);
+                      const registeredDate = registrationDates.get(company.id) || "";
                       return <tr key={company.id} data-status-company-id={company.id}>
-                        <td>{company.name}</td><td>{roundLabel(company)}</td><td>{pocket ? "@" : `${target}회`}</td><td>{pocket ? "-" : `${done}회`}</td>
+                        <td>{company.name}</td>
+                        <td className="status-registration"><button className={`status-registration-btn ${registeredDate ? "" : "unknown"}`} title="등록일 수정" aria-label={`${company.name} 등록일 수정`} onClick={() => setEditingCompany(company)}>{registeredDate || "확인 필요"}</button></td>
+                        <td className="status-elapsed">{registrationElapsedLabel(registeredDate, registrationToday)}</td>
+                        <td>{roundLabel(company)}</td><td>{pocket ? "@" : `${target}회`}</td><td>{pocket ? "-" : `${done}회`}</td>
                         <td className={pocket ? "status-unlimited" : `status-remaining ${remaining === 0 ? "none" : ""}`}>{pocket ? "제한 없음" : `${remaining}회`}</td>
                       </tr>;
                     })}
-                    {!statusCompanies.length && <tr><td className="status-empty" colSpan="5">표시할 기업이 없습니다</td></tr>}
+                    {!statusCompanies.length && <tr><td className="status-empty" colSpan="7">표시할 기업이 없습니다</td></tr>}
                   </tbody>
                 </table>
               </section>
@@ -5152,7 +5221,7 @@
           {toast && <div className="toast">{toast}</div>}
           {viewingGrant && <GrantModal grant={viewingGrant} onClose={() => setViewingGrant(null)} onSave={(form) => { saveGrant(form); setViewingGrant(null); }} onDelete={viewingGrant.id ? (id) => { if (!window.confirm || window.confirm("이 지원사업을 삭제할까요?")) { deleteGrant(id); setViewingGrant(null); notify("삭제됨"); } } : null} />}
           {editingGrant && <GrantModal grant={editingGrant} onClose={() => setEditingGrant(null)} onSave={saveGrant} onDelete={editingGrant.id ? deleteGrant : null} />}
-          {editingCompany && <CompanyModal company={editingCompany} onClose={() => setEditingCompany(null)} onSave={saveCompany} onDelete={editingCompany.id ? deleteCompany : null} />}
+          {editingCompany && <CompanyModal company={{ ...editingCompany, registeredDate: registrationDates.get(editingCompany.id) || editingCompany.registeredDate || (editingCompany.id ? "" : registrationToday) }} onClose={() => setEditingCompany(null)} onSave={saveCompany} onDelete={editingCompany.id ? deleteCompany : null} />}
           {assignmentNoteForm && (
             <div className="modal-backdrop" onClick={(event) => { if (event.target === event.currentTarget) saveAssignmentNote(); }}>
               <div className="modal" style={{ width: "560px", maxWidth: "calc(100vw - 32px)" }} onClick={(event) => event.stopPropagation()}>
@@ -5383,6 +5452,7 @@
             <h2>{form.id ? "기업 수정" : "기업 추가"}</h2>
             <div className="form-grid">
               <Field label="기업명"><input value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} /></Field>
+              <Field label="보드 등록일"><input type="date" aria-label="보드 등록일" max={registrationDateKey(new Date())} value={form.registeredDate || ""} onChange={event => setForm({ ...form, registeredDate: event.target.value })} /></Field>
               <Field label="메모"><textarea value={form.memo} onChange={(e) => setForm({ ...form, memo: e.target.value })} /></Field>
               <Field label="창업지역"><input value={form.region} onChange={(e) => setForm({ ...form, region: e.target.value })} /></Field>
               <Field label="창립일자"><input type="date" value={form.foundedDate || ""} onChange={(e) => setForm({ ...form, foundedDate: e.target.value })} /></Field>
