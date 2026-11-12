@@ -259,9 +259,12 @@
       background: #f9fbfb;
     }
     .board-head {
-      height: 68px;
-      padding: 16px 18px;
+      min-height: 68px;
+      flex: 0 0 auto;
+      padding: 12px 18px;
       display: flex;
+      flex-wrap: wrap;
+      gap: 10px 14px;
       justify-content: space-between;
       align-items: center;
       border-bottom: 1px solid #dfe5e8;
@@ -269,10 +272,13 @@
     }
     .board-title-wrap {
       display: flex;
+      flex: 0 0 auto;
       align-items: center;
       gap: 12px;
       min-width: 0;
     }
+    .board-title-wrap > .title { white-space: nowrap; }
+    .board-head > .board-actions { margin-left: auto; }
     .criteria-chips {
       display: flex;
       align-items: center;
@@ -1516,6 +1522,58 @@
     .full-calendar-day .meeting-title {
       font-size: 11px;
     }
+    .company-status-panel {
+      flex: 1;
+      min-height: 0;
+      overflow: auto;
+      padding: 16px 18px 24px;
+      background: #ffffff;
+    }
+    .company-status-search {
+      width: 260px;
+      max-width: 100%;
+      height: 34px;
+      margin-bottom: 14px;
+      border: 1px solid #d7e0e4;
+      border-radius: 6px;
+      padding: 0 10px;
+      font: inherit;
+      font-size: 13px;
+    }
+    .company-status-table {
+      width: 100%;
+      min-width: 560px;
+      border-collapse: separate;
+      border-spacing: 0;
+      table-layout: fixed;
+      font-size: 13px;
+      font-variant-numeric: tabular-nums;
+    }
+    .company-status-table th,
+    .company-status-table td {
+      padding: 11px 12px;
+      border-bottom: 1px solid #e5e9ec;
+      text-align: right;
+    }
+    .company-status-table th {
+      position: sticky;
+      top: 0;
+      z-index: 1;
+      background: #f5f7f8;
+      color: #65727a;
+      font-size: 12px;
+      font-weight: 400;
+      white-space: nowrap;
+    }
+    .company-status-table th:first-child,
+    .company-status-table td:first-child { text-align: left; overflow-wrap: anywhere; }
+    .company-status-table th:not(:first-child) { width: 82px; }
+    .company-status-table th:last-child { width: 112px; }
+    .company-status-table tbody tr:hover { background: #fafbfc; }
+    .company-status-table .status-remaining { font-weight: 600; color: #172026; white-space: nowrap; }
+    .company-status-table .status-remaining.none,
+    .company-status-table .status-unlimited { color: #8a959d; font-weight: 400; }
+    .company-status-table .status-empty { text-align: center; padding: 32px 12px; color: #8a959d; }
     .log-panel {
       flex: 1;
       overflow: auto;
@@ -3718,6 +3776,7 @@
       const [statusMenuKey, setStatusMenuKey] = useState("");
       const [meetingForm, setMeetingForm] = useState(null);
       const [activeCompanyTab, setActiveCompanyTab] = useState("all");
+      const [companyStatusQuery, setCompanyStatusQuery] = useState("");
       const [showPastGrants, setShowPastGrants] = useState(false);
       const [boardDate, setBoardDate] = useState(todayKey);
       const [manualSchedules, setSchedules] = useState([]);
@@ -3922,6 +3981,10 @@
         items: visibleGrants.filter((grant) => grantCategory(grant) === category)
       })), [visibleGrants]);
       const orderedCompanies = useMemo(() => orderCompaniesByIds(companies, companyOrder), [companies, companyOrder]);
+      const statusCompanies = useMemo(() => {
+        const query = companyStatusQuery.trim().toLowerCase();
+        return orderedCompanies.filter(company => !company.contractEnded && (!query || String(company.name || "").toLowerCase().includes(query)));
+      }, [orderedCompanies, companyStatusQuery]);
       const visibleCompanies = useMemo(
         () => orderedCompanies.filter((company) => {
           if (activeCompanyTab === "log") return false;
@@ -4835,6 +4898,7 @@
                 <div className="board-tabs">
                   {[
                     ["all", "전체"],
+                    ["status", "현황 관리"],
                     ["ended", "종료"],
                     ["log", "LOG"]
                   ].map(([key, label]) => (
@@ -4843,7 +4907,27 @@
                 </div>
               </div>
             </div>
-            {activeCompanyTab === "log" ? (
+            {activeCompanyTab === "status" ? (
+              <section className="company-status-panel" aria-label="기업 지원사업 현황">
+                <input className="company-status-search" aria-label="현황 기업 검색" placeholder="기업 검색" value={companyStatusQuery} onChange={event => setCompanyStatusQuery(event.target.value)} />
+                <table className="company-status-table" aria-label="현재 회차 지원사업 잔여 횟수">
+                  <thead><tr><th scope="col">기업</th><th scope="col">회차</th><th scope="col">계약 횟수</th><th scope="col">완료</th><th scope="col">남은 횟수</th></tr></thead>
+                  <tbody>
+                    {statusCompanies.map(company => {
+                      const pocket = isPocketCompany(company);
+                      const target = Math.max(1, Number(company.monthlyTarget) || 1);
+                      const done = monthlyDoneCount(company, grantMap);
+                      const remaining = Math.max(0, target - done);
+                      return <tr key={company.id} data-status-company-id={company.id}>
+                        <td>{company.name}</td><td>{roundLabel(company)}</td><td>{pocket ? "@" : `${target}회`}</td><td>{pocket ? "-" : `${done}회`}</td>
+                        <td className={pocket ? "status-unlimited" : `status-remaining ${remaining === 0 ? "none" : ""}`}>{pocket ? "제한 없음" : `${remaining}회`}</td>
+                      </tr>;
+                    })}
+                    {!statusCompanies.length && <tr><td className="status-empty" colSpan="5">표시할 기업이 없습니다</td></tr>}
+                  </tbody>
+                </table>
+              </section>
+            ) : activeCompanyTab === "log" ? (
               <div className="log-panel">
                 {logs.map((item) => (
                   <div className={`log-item ${item.undone ? "undone" : ""}`} key={item.id} onClick={() => undoLog(item)} title={item.undo && !item.undone ? "클릭하면 해당 변경을 취소합니다" : ""}>
