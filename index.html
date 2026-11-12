@@ -966,6 +966,13 @@
       flex: 0 0 auto;
     }
     .form-grid { display: grid; gap: 10px; }
+    .company-type-selector { margin: 0; padding: 0; border: 0; min-width: 0; }
+    .company-type-selector legend { padding: 0; margin-bottom: 5px; color: #47565e; font-size: 12px; font-weight: 600; }
+    .company-type-options { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 3px; padding: 3px; background: #f1f3f4; border-radius: 6px; }
+    .company-type-option { position: relative; display: flex; align-items: center; justify-content: center; height: 32px; border-radius: 4px; color: #77828a; font-size: 13px; cursor: pointer; }
+    .company-type-option.selected { background: #ffffff; color: #172026; box-shadow: 0 1px 3px #17202614; }
+    .company-type-option:focus-within { outline: 2px solid #738a9a; outline-offset: 1px; }
+    .company-type-option input { position: absolute; width: 1px; height: 1px; opacity: 0; }
     .grant-edit-modal .form-grid { gap: 12px; }
     .field label {
       display: block;
@@ -1590,6 +1597,10 @@
       line-height: 1;
     }
     .company-status-table tbody tr:hover { background: #fafbfc; }
+    .company-status-table tbody tr.status-secondary { background: #f5f6f7; }
+    .company-status-table tbody tr.status-secondary:hover { background: #eef0f2; }
+    .company-status-table tr.status-secondary-start td { border-top: 7px solid #ffffff; }
+    .status-company-type { flex: 0 0 auto; color: #77828a; font-size: 11px; white-space: nowrap; }
     .company-status-table .status-remaining { font-weight: 600; color: #172026; white-space: nowrap; }
     .company-status-table .status-remaining.none,
     .company-status-table .status-unlimited { color: #8a959d; font-weight: 400; }
@@ -2627,6 +2638,14 @@
           ribbonDismissedAt: grant.ribbonDismissedAt || ""
         }));
     }
+    const COMPANY_TYPE_OPTIONS = [
+      { value: "customer", label: "고객사" },
+      { value: "hold", label: "보류" },
+      { value: "pocket", label: "포켓" }
+    ];
+    function companyTypeValue(company) {
+      return COMPANY_TYPE_OPTIONS.some(option => option.value === company?.companyType) ? company.companyType : "customer";
+    }
     function normalizeCompanyList(items) {
       if (!Array.isArray(items)) return seedCompanies;
       return items
@@ -2635,6 +2654,7 @@
           ...company,
           id: String(company.id || `company-${index}`),
           name: String(company.name || "이름 없는 기업"),
+          companyType: companyTypeValue(company),
           memo: company.memo || "",
           region: company.region || "",
           foundedDate: company.foundedDate || "",
@@ -4051,7 +4071,8 @@
       const registrationDates = useMemo(() => companyRegistrationDates(companies, logs), [companies, logs]);
       const statusCompanies = useMemo(() => {
         const query = companyStatusQuery.trim().toLowerCase();
-        return orderedCompanies.filter(company => !company.contractEnded && (!query || String(company.name || "").toLowerCase().includes(query)));
+        const filtered = orderedCompanies.filter(company => !company.contractEnded && (!query || String(company.name || "").toLowerCase().includes(query)));
+        return COMPANY_TYPE_OPTIONS.flatMap(option => filtered.filter(company => companyTypeValue(company) === option.value));
       }, [orderedCompanies, companyStatusQuery]);
       const visibleCompanies = useMemo(
         () => orderedCompanies.filter((company) => {
@@ -4530,7 +4551,7 @@
         const assignmentStatuses = { ...(form.assignmentStatuses || {}) };
         assignedGrantIds.forEach((grantId) => { assignmentStatuses[grantId] = assignmentStatuses[grantId] || "request"; });
         const roundValue = form.round === "" || form.round === null || form.round === undefined ? 1 : Number(form.round);
-        const next = { ...form, id: form.id || uid("c"), createdAt: form.id ? previousCompany?.createdAt || form.createdAt || "" : new Date().toISOString(), registeredDate, age: undefined, round: Number.isNaN(roundValue) ? 1 : roundValue, monthlyTarget: target, monthlyDone: Math.min(Number(form.monthlyDone || 0), target), assignedGrantIds, assignmentStatuses };
+        const next = { ...form, companyType: companyTypeValue(form), id: form.id || uid("c"), createdAt: form.id ? previousCompany?.createdAt || form.createdAt || "" : new Date().toISOString(), registeredDate, age: undefined, round: Number.isNaN(roundValue) ? 1 : roundValue, monthlyTarget: target, monthlyDone: Math.min(Number(form.monthlyDone || 0), target), assignedGrantIds, assignmentStatuses };
         setCompanies((current) => form.id ? keepCompanyOrder(current, current.map((company) => company.id === next.id ? next : company)) : [next, ...current]);
         setCompanyOrder((current) => form.id ? current : [next.id, ...current.filter((id) => id !== next.id)]);
         setEditingCompany(null);
@@ -4982,14 +5003,17 @@
                 <table className="company-status-table" aria-label="현재 회차 지원사업 잔여 횟수">
                   <thead><tr><th scope="col">기업</th><th scope="col" className="status-registration-heading">등록일</th><th scope="col" className="status-quota-heading">계약횟수/완료</th><th scope="col">남은 횟수</th></tr></thead>
                   <tbody>
-                    {statusCompanies.map(company => {
+                    {statusCompanies.map((company, index) => {
+                      const type = companyTypeValue(company);
+                      const secondary = type !== "customer";
+                      const secondaryStart = secondary && index > 0 && companyTypeValue(statusCompanies[index - 1]) === "customer";
                       const pocket = isPocketCompany(company);
                       const target = Math.max(1, Number(company.monthlyTarget) || 1);
                       const done = monthlyDoneCount(company, grantMap);
                       const remaining = Math.max(0, target - done);
                       const registeredDate = registrationDates.get(company.id) || "";
-                      return <tr key={company.id} data-status-company-id={company.id}>
-                        <td><div className="status-company-label"><span>{company.name}</span><span className="status-round-badge" aria-label={roundLabel(company)}>{pocket ? "@" : Math.max(1, Number(company.round) || 1)}</span></div></td>
+                      return <tr key={company.id} data-status-company-id={company.id} data-company-type={type} className={`${secondary ? "status-secondary" : ""} ${secondaryStart ? "status-secondary-start" : ""}`}>
+                        <td><div className="status-company-label"><span>{company.name}</span><span className="status-round-badge" aria-label={roundLabel(company)}>{pocket ? "@" : Math.max(1, Number(company.round) || 1)}</span>{secondary && <span className="status-company-type">{COMPANY_TYPE_OPTIONS.find(option => option.value === type).label}</span>}</div></td>
                         <td className={`status-registration ${registeredDate ? "" : "unknown"}`}>{registeredDate || "확인 필요"}{registeredDate && <React.Fragment> <span className="status-elapsed">({registrationElapsedLabel(registeredDate, registrationToday)})</span></React.Fragment>}</td>
                         <td>{pocket ? "@/-" : `${target}/${done}`}</td>
                         <td className={pocket ? "status-unlimited" : `status-remaining ${remaining === 0 ? "none" : ""}`}>{pocket ? "제한 없음" : `${remaining}회`}</td>
@@ -5455,6 +5479,12 @@
             <h2>{form.id ? "기업 수정" : "기업 추가"}</h2>
             <div className="form-grid">
               <Field label="기업명"><input value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} /></Field>
+              <fieldset className="company-type-selector">
+                <legend>기업 구분</legend>
+                <div className="company-type-options">
+                  {COMPANY_TYPE_OPTIONS.map(option => <label key={option.value} className={`company-type-option ${companyTypeValue(form) === option.value ? "selected" : ""}`}><input type="radio" name="companyType" value={option.value} checked={companyTypeValue(form) === option.value} onChange={() => setForm({ ...form, companyType: option.value })} />{option.label}</label>)}
+                </div>
+              </fieldset>
               <Field label="메모"><textarea value={form.memo} onChange={(e) => setForm({ ...form, memo: e.target.value })} /></Field>
               <Field label="창업지역"><input value={form.region} onChange={(e) => setForm({ ...form, region: e.target.value })} /></Field>
               <Field label="창립일자"><input type="date" value={form.foundedDate || ""} onChange={(e) => setForm({ ...form, foundedDate: e.target.value })} /></Field>
