@@ -1608,14 +1608,23 @@
       line-height: 1;
     }
     .company-status-table tbody tr:hover { background: #fafbfc; }
-    .company-status-table tbody tr.status-secondary { background: #f5f6f7; }
-    .company-status-table tbody tr.status-secondary:hover { background: #eef0f2; }
+    .company-status-table tbody tr.status-secondary { background: #f5f5f5; color: #707070; }
+    .company-status-table tbody tr.status-secondary:hover { background: #ededed; }
     .company-status-table tr.status-secondary-start td { border-top: 7px solid #ffffff; }
     .status-company-type { flex: 0 0 auto; color: #77828a; font-size: 11px; white-space: nowrap; }
     .company-status-table .status-remaining { flex: 0 0 auto; font-weight: 600; color: #172026; white-space: nowrap; }
     .company-status-table .status-unlimited { flex: 0 0 auto; white-space: nowrap; }
     .company-status-table .status-remaining.none,
     .company-status-table .status-unlimited { color: #8a959d; font-weight: 400; }
+    .company-status-table .status-secondary td { border-bottom-color: #e4e4e4; }
+    .company-status-table .status-secondary td,
+    .company-status-table .status-secondary .status-registration.unknown,
+    .company-status-table .status-secondary .status-company-type,
+    .company-status-table .status-secondary .status-elapsed,
+    .company-status-table .status-secondary .status-remaining,
+    .company-status-table .status-secondary .status-unlimited { color: #707070; }
+    .company-status-table .status-secondary .status-remaining { font-weight: 400; }
+    .company-status-table .status-secondary .status-round-badge { background: #e7e7e7; color: #656565; }
     .company-status-table .status-empty { text-align: center; padding: 32px 12px; color: #8a959d; }
     .log-panel {
       flex: 1;
