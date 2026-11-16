@@ -5,7 +5,7 @@
 })(typeof globalThis !== 'undefined' ? globalThis : this, function () {
   'use strict';
   const CRM_ORIGIN = 'https://crm.xn--9i1b674cwc38r6pa.com';
-  const BOARD_ORIGIN = 'https://lahae-kang.github.io';
+  const BOARD_ORIGIN = 'https://wrtfine.github.io';
   const CHANNEL = 'pocket-crm-screen-v1';
   const clean = (value, max = 200) => String(value || '').replace(/\s+/g, ' ').trim().slice(0, max);
   function validDate(value) {

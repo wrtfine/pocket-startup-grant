@@ -6,7 +6,7 @@ chrome.runtime.onMessage.addListener((message, sender, respond) => {
     const snapshot = PocketCRM.sanitizeSnapshot(message.snapshot);
     if (!snapshot) { respond({ ok: false }); return; }
     chrome.storage.local.set({ [CACHE]: snapshot }).then(async () => {
-      const tabs = await chrome.tabs.query({ url: 'https://lahae-kang.github.io/pocket-startup-grant/*' });
+      const tabs = await chrome.tabs.query({ url: `${PocketCRM.BOARD_ORIGIN}/pocket-startup-grant/*` });
       await Promise.allSettled(tabs.map(tab => chrome.tabs.sendMessage(tab.id, { type: 'CRM_SNAPSHOT', snapshot })));
       respond({ ok: true });
     }).catch(() => respond({ ok: false }));
