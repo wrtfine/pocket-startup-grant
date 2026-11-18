@@ -4,6 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>스타트업 지원사업 매칭 보드</title>
+  <script src="./board-sync.js?v=1"></script>
   <script src="./crm-bridge-extension/crm-core.js?v=1.0.1"></script>
   <script crossorigin src="https://unpkg.com/react@18/umd/react.development.js"></script>
   <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
@@ -3120,31 +3121,53 @@
         new Promise((resolve) => window.setTimeout(() => resolve(null), ms))
       ]);
     }
-    async function storageRead() {
-      if (supabaseClient) {
-        try {
-          const result = await withTimeout(supabaseClient
-            .from("app_state")
-            .select("data")
-            .eq("id", STORAGE_KEY)
-            .maybeSingle(), 15000);
-          if (!result) {
-            console.warn("Supabase read timed out");
-            return null;
-          }
-          const { data, error } = result;
-          if (error) throw error;
-          return data?.data || null;
-        } catch (error) {
-          console.warn("Supabase read failed", error);
-        }
-      }
-      const api = window.storage || memoryStorage;
+    const syncCore = window.PocketBoardSync;
+    let lastBoardRead = null;
+    let boardWriteQueue = Promise.resolve();
+    function validBoard(data) { return Array.isArray(data?.grants) && Array.isArray(data?.companies); }
+    function draftSlot() {
       try {
-        const value = await api.get(STORAGE_KEY);
-        if (!value) return null;
-        return typeof value === "string" ? JSON.parse(value) : value;
+        let id = sessionStorage.getItem(`${STORAGE_KEY}:tab`);
+        if (!id) { id = uid("tab"); sessionStorage.setItem(`${STORAGE_KEY}:tab`, id); }
+        return `${STORAGE_KEY}:pending:${id}`;
       } catch { return null; }
+    }
+    function rememberBoardDraft(base, draft) {
+      try { const key = draftSlot(); if (!key) return false; localStorage.setItem(key, JSON.stringify({ base, draft, time: new Date().toISOString() })); return true; }
+      catch (error) { console.warn("Pending edit backup failed", error); return false; }
+    }
+    function readBoardDraft() {
+      try { const key = draftSlot(); return key ? JSON.parse(localStorage.getItem(key) || "null") : null; }
+      catch { return null; }
+    }
+    function clearBoardDraft(draft) {
+      try { const key = draftSlot(); const pending = readBoardDraft(); if (key && syncCore.equal(pending?.draft, draft)) localStorage.removeItem(key); }
+      catch {}
+    }
+    async function readBoardRecord() {
+      if (!syncCore) throw new Error("저장 보호 파일을 불러오지 못했습니다");
+      if (supabaseClient) {
+        const result = await withTimeout(supabaseClient.from("app_state").select("data,updated_at").eq("id", STORAGE_KEY).maybeSingle());
+        if (!result || result.error || !validBoard(result.data?.data)) throw new Error("서버 데이터를 확인하지 못했습니다");
+        return { data: result.data.data, revision: result.data.updated_at };
+      }
+      const value = await (window.storage || memoryStorage).get(STORAGE_KEY);
+      const data = typeof value === "string" ? JSON.parse(value) : value;
+      if (!validBoard(data)) throw new Error("저장된 데이터를 찾을 수 없습니다");
+      return { data, revision: null };
+    }
+    async function storageRead(options = {}) {
+      try {
+        if (supabaseClient && options.revision) {
+          const version = await withTimeout(supabaseClient.from("app_state").select("updated_at").eq("id", STORAGE_KEY).maybeSingle());
+          if (!version || version.error || !version.data) throw new Error("서버 변경 여부를 확인하지 못했습니다");
+          if (version.data.updated_at === options.revision) return { unchanged: true };
+        }
+        const record = await readBoardRecord();
+        Object.defineProperty(record.data, "__boardRevision", { value: record.revision, configurable: true });
+        if (options.remember !== false) lastBoardRead = syncCore.clone(record.data);
+        return record.data;
+      } catch (error) { console.warn("Board read failed", error); return null; }
     }
     function isSeedLikePayload(data) {
       if (!data?.grants || !data?.companies) return false;
@@ -3155,42 +3178,40 @@
       const hasWorkData = (data.schedules || []).length > 0 || (data.logs || []).length > 0;
       return grantsAreSeed && companiesAreSeed && !hasWorkData;
     }
-    async function storageWrite(data) {
-      let payload = data && Array.isArray(data.logs) ? { ...data, logs: data.logs.slice(0, LOG_LIMIT) } : data;
-      if (isSeedLikePayload(payload)) {
-        console.warn("Refused to write seed-like payload before remote data is confirmed");
-        return { ok: false, remote: false, blocked: true, error: new Error("seed-like payload blocked") };
-      }
-      if (data && !Object.prototype.hasOwnProperty.call(data, "customerProfiles")) {
-        const saved = await storageRead();
-        if (saved?.customerProfiles || saved?.customerSchedules) payload = { ...payload, customerProfiles: saved?.customerProfiles || {}, customerSchedules: saved?.customerSchedules || {} };
-      }
-      if (supabaseClient) {
+    function storageWrite(data, options = {}) {
+      const baseline = syncCore?.clone(options.base || lastBoardRead);
+      const draft = syncCore?.clone(data);
+      const save = async () => {
+        if (!validBoard(baseline) || !validBoard(draft) || isSeedLikePayload(draft)) return { ok: false, blocked: true, error: new Error("서버 원본을 확인하기 전에는 저장할 수 없습니다") };
+        const backedUp = rememberBoardDraft(baseline, draft);
         try {
-          const { error } = await supabaseClient
-            .from("app_state")
-            .upsert({
-              id: STORAGE_KEY,
-              data: payload,
-              updated_at: new Date().toISOString()
-            });
-          if (error) throw error;
-          return { ok: true, remote: true };
-        } catch (error) {
-          console.warn("Supabase write failed", error);
-          const api = window.storage || memoryStorage;
-          try { await api.set(STORAGE_KEY, JSON.stringify(payload)); } catch {}
-          return { ok: false, remote: false, fallback: true, error };
-        }
-      }
-      const api = window.storage || memoryStorage;
-      try {
-        await api.set(STORAGE_KEY, JSON.stringify(payload));
-        return { ok: true, remote: false, fallback: true };
-      } catch (error) {
-        console.warn("Local write failed", error);
-        return { ok: false, remote: false, fallback: false, error };
-      }
+          for (let attempt = 0; attempt < 4; attempt += 1) {
+            const record = await readBoardRecord();
+            const local = { ...baseline, ...draft };
+            const merged = syncCore.merge(baseline, local, record.data, { prefer: options.prefer, logLimit: LOG_LIMIT });
+            if (!merged.ok) return { ok: false, conflict: true, conflicts: merged.conflicts, data: merged.data, remoteData: record.data, backedUp };
+            const payload = { ...merged.data, logs: (merged.data.logs || []).slice(0, LOG_LIMIT) };
+            let savedRevision = record.revision;
+            if (!supabaseClient) {
+              await (window.storage || memoryStorage).set(STORAGE_KEY, JSON.stringify(payload));
+            } else if (!syncCore.equal(payload, record.data)) {
+              if (!record.revision || !Number.isFinite(Date.parse(record.revision))) throw new Error("서버 저장 버전을 확인하지 못했습니다");
+              const revision = new Date(Math.max(Date.now(), Date.parse(record.revision) + 1)).toISOString();
+              const result = await withTimeout(supabaseClient.from("app_state").update({ data: payload, updated_at: revision }).eq("id", STORAGE_KEY).eq("updated_at", record.revision).select("data,updated_at").maybeSingle());
+              if (!result || result.error) throw new Error(result?.error?.message || "서버 저장 응답 시간이 초과됐습니다");
+              if (!result.data) continue;
+              savedRevision = result.data.updated_at;
+            }
+            lastBoardRead = syncCore.clone(payload);
+            clearBoardDraft(draft);
+            return { ok: true, remote: !!supabaseClient, data: payload, revision: savedRevision };
+          }
+          throw new Error("다른 기기에서 저장 중입니다. 잠시 후 다시 시도합니다");
+        } catch (error) { console.warn("Board save failed", error); return { ok: false, remote: false, error, backedUp }; }
+      };
+      const operation = boardWriteQueue.then(save, save);
+      boardWriteQueue = operation.catch(() => {});
+      return operation;
     }
     const crmCore = window.PocketCRM;
     const CRM_STORAGE_KEY = `${STORAGE_KEY}:crm-meetings-v1`;
@@ -3273,9 +3294,11 @@
       const [customerProfiles, setCustomerProfiles] = useState({});
       const [customerSchedules, setCustomerSchedules] = useState({});
       const [profileForm, setProfileForm] = useState(null);
+      const customerProfileBaseRef = useRef(null);
       const [editingProfile, setEditingProfile] = useState(false);
       const [profileError, setProfileError] = useState("");
       const [savingProfile, setSavingProfile] = useState(false);
+      const [customerSaveError, setCustomerSaveError] = useState("");
       const [customerCalendarBase, setCustomerCalendarBase] = useState(todayKey());
       const [showCustomerCalendar, setShowCustomerCalendar] = useState(false);
       const [customerScheduleForm, setCustomerScheduleForm] = useState(null);
@@ -3380,12 +3403,34 @@
       }, [customerGrantTab, customerGrantQuery]);
       useEffect(() => {
         if (!company || profileForm) return;
-        setProfileForm({ ...defaultCustomerProfile(company), ...(customerProfiles[companyId] || {}) });
+        const initial = { ...defaultCustomerProfile(company), ...(customerProfiles[companyId] || {}) };
+        customerProfileBaseRef.current = syncCore.clone(initial);
+        setProfileForm(initial);
       }, [company, customerProfiles, companyId, profileForm]);
-      async function updateCustomerResult(grantId, result) {
+      async function customerSnapshot() {
         const saved = await storageRead();
+        if (!saved) setCustomerSaveError("서버 데이터를 불러오지 못했습니다. 입력 내용은 유지되며 저장은 중지했습니다.");
+        return saved;
+      }
+      async function persistCustomerData(data, base) {
+        const result = await storageWrite(data, { base });
+        if (!result.ok) {
+          setCustomerSaveError(result.conflict ? "같은 항목이 다른 기기에서도 변경되어 저장하지 않았습니다. 최신 내용을 확인한 뒤 다시 시도해 주세요." : result.backedUp ? "서버 저장 실패. 입력 내용은 유지되며 이 기기에 임시 보관했습니다. 다시 저장해 주세요." : "서버 저장 실패. 임시 보관도 실패했으니 이 창을 닫거나 새로고침하지 말고 다시 저장해 주세요.");
+          return null;
+        }
+        setCustomerSaveError("");
+        return result.data;
+      }
+      async function updateCustomerResult(grantId, result) {
+        const saved = await customerSnapshot();
+        if (!saved) return;
         const savedCompanies = saved?.companies || companies;
         const currentCompany = savedCompanies.find((item) => item.id === companyId) || company;
+        if (assignmentResult(currentCompany, grantId) !== assignmentResult(company, grantId) || assignmentStatus(currentCompany, grantId) !== assignmentStatus(company, grantId)) {
+          setCompanies(normalizeCompanyList(savedCompanies));
+          setCustomerSaveError("다른 기기에서 결과가 변경되어 최신 상태를 불러왔습니다. 결과를 다시 선택해 주세요.");
+          return;
+        }
         const currentResult = assignmentResult(currentCompany, grantId);
         const nextResult = currentResult === result ? "" : result;
         const nextCompanies = savedCompanies.map((item) => {
@@ -3421,12 +3466,13 @@
           calendarHeight: saved?.calendarHeight,
           customerProfiles: saved?.customerProfiles || customerProfiles
         };
-        await storageWrite(nextData);
-        setCompanies(nextCompanies);
+        const committed = await persistCustomerData(nextData, saved);
+        if (committed) setCompanies(committed.companies);
       }
       async function saveCustomerSchedule() {
         if (!customerScheduleForm?.title?.trim()) return;
-        const saved = await storageRead();
+        const saved = await customerSnapshot();
+        if (!saved) return;
         const savedSchedules = saved?.customerSchedules || customerSchedules;
         const nextItem = {
           id: uid("cs"),
@@ -3450,12 +3496,14 @@
           customerProfiles: saved?.customerProfiles || customerProfiles,
           customerSchedules: nextSchedules
         };
-        await storageWrite(nextData);
-        setCustomerSchedules(nextSchedules);
+        const committed = await persistCustomerData(nextData, saved);
+        if (!committed) return;
+        setCustomerSchedules(committed.customerSchedules);
         setCustomerScheduleForm(null);
       }
       async function addCustomerGrant(grantId) {
-        const saved = await storageRead();
+        const saved = await customerSnapshot();
+        if (!saved) return;
         const savedCompanies = saved?.companies || companies;
         const nextCompanies = savedCompanies.map((item) => {
           if (item.id !== companyId || (item.assignedGrantIds || []).includes(grantId)) return item;
@@ -3485,11 +3533,12 @@
           calendarHeight: saved?.calendarHeight,
           customerProfiles: saved?.customerProfiles || customerProfiles
         };
-        await storageWrite(nextData);
-        setCompanies(nextCompanies);
+        const committed = await persistCustomerData(nextData, saved);
+        if (committed) setCompanies(committed.companies);
       }
       async function removeCustomerGrant(grantId) {
-        const saved = await storageRead();
+        const saved = await customerSnapshot();
+        if (!saved) return;
         const savedCompanies = saved?.companies || companies;
         const nextCompanies = savedCompanies.map((item) => {
           if (item.id !== companyId || isBuilderAssignment(item, grantId)) return item;
@@ -3523,12 +3572,19 @@
           calendarHeight: saved?.calendarHeight,
           customerProfiles: saved?.customerProfiles || customerProfiles
         };
-        await storageWrite(nextData);
-        setCompanies(nextCompanies);
+        const committed = await persistCustomerData(nextData, saved);
+        if (committed) setCompanies(committed.companies);
       }
       async function updateCustomerGrantStatus(grantId, status) {
-        const saved = await storageRead();
+        const saved = await customerSnapshot();
+        if (!saved) return;
         const savedCompanies = saved?.companies || companies;
+        const latestCompany = savedCompanies.find(item => item.id === companyId);
+        if (latestCompany && assignmentStatus(latestCompany, grantId) !== assignmentStatus(company, grantId)) {
+          setCompanies(normalizeCompanyList(savedCompanies));
+          setCustomerSaveError("다른 기기에서 상태가 변경되어 최신 내용을 불러왔습니다. 상태를 다시 확인해 주세요.");
+          return;
+        }
         const nextCompanies = savedCompanies.map((item) => {
           if (item.id !== companyId) return item;
           const nextResults = { ...(item.assignmentResults || {}) };
@@ -3559,8 +3615,8 @@
           calendarHeight: saved?.calendarHeight,
           customerProfiles: saved?.customerProfiles || customerProfiles
         };
-        await storageWrite(nextData);
-        setCompanies(nextCompanies);
+        const committed = await persistCustomerData(nextData, saved);
+        if (committed) setCompanies(committed.companies);
       }
       async function saveCustomerProfile() {
         const nextProfile = { ...(profileForm || {}) };
@@ -3569,7 +3625,11 @@
           return;
         }
         setSavingProfile(true);
-        const saved = await storageRead();
+        const saved = await customerSnapshot();
+        if (!saved) { setSavingProfile(false); return; }
+        const remoteProfile = { ...defaultCustomerProfile(saved.companies.find(item => item.id === companyId) || company), ...(saved.customerProfiles?.[companyId] || {}) };
+        const profileMerge = syncCore.merge(customerProfileBaseRef.current || remoteProfile, nextProfile, remoteProfile);
+        if (!profileMerge.ok) { setProfileError("같은 기업 정보가 다른 기기에서도 변경됐습니다. 입력 내용은 유지되니 최신 정보를 확인한 후 다시 저장해 주세요."); setSavingProfile(false); return; }
         const nextData = {
           ...(saved || {}),
           grants: saved?.grants || grants,
@@ -3579,12 +3639,14 @@
           calendarHeight: saved?.calendarHeight,
           customerProfiles: {
             ...(saved?.customerProfiles || {}),
-            [companyId]: { ...nextProfile, updatedAt: new Date().toISOString() }
+            [companyId]: { ...profileMerge.data, updatedAt: new Date().toISOString() }
           }
         };
-        await storageWrite(nextData);
-        setCustomerProfiles(nextData.customerProfiles);
-        setProfileForm(nextData.customerProfiles[companyId]);
+        const committed = await persistCustomerData(nextData, saved);
+        if (!committed) { setSavingProfile(false); return; }
+        setCustomerProfiles(committed.customerProfiles);
+        setProfileForm(committed.customerProfiles[companyId]);
+        customerProfileBaseRef.current = syncCore.clone(committed.customerProfiles[companyId]);
         setEditingProfile(false);
         setProfileError("");
         setSavingProfile(false);
@@ -3632,9 +3694,10 @@
       return (
         <div className="customer-page">
           <div className="customer-shell">
+            {customerSaveError && <div role="alert" className="required-note">{customerSaveError}</div>}
             <div className="customer-section-head">
               <div>
-                <h2><span>내 지원사업 관리</span><button className="customer-info-chip inline" onClick={() => { setProfileForm({ ...defaultCustomerProfile(company), ...(customerProfiles[companyId] || {}) }); setEditingProfile(true); }}>내 기업 정보</button></h2>
+                <h2><span>내 지원사업 관리</span><button className="customer-info-chip inline" onClick={() => { const initial = { ...defaultCustomerProfile(company), ...(customerProfiles[companyId] || {}) }; customerProfileBaseRef.current = syncCore.clone(initial); setProfileForm(initial); setProfileError(""); setEditingProfile(true); }}>내 기업 정보</button></h2>
               </div>
             </div>
             {assignedGrants.length ? (
@@ -3712,7 +3775,7 @@
             <CustomerProfileModal
               form={profileForm}
               setForm={setProfileForm}
-              error={profileError}
+              error={profileError || customerSaveError}
               saving={savingProfile}
               onSave={saveCustomerProfile}
               canClose={profileComplete}
@@ -3913,7 +3976,36 @@
       const companyClickTimer = useRef(null);
       const statusClickTimerRef = useRef(null);
       const scheduleClickBlockRef = useRef("");
-      const saveRequestRef = useRef(0);
+      const boardBaseRef = useRef(null);
+      const boardRevisionRef = useRef(null);
+      const boardSavedViewRef = useRef(null);
+      const boardSaveBusyRef = useRef(false);
+      const boardConflictRef = useRef(false);
+      const boardPreferenceRef = useRef(null);
+      const [boardRetry, setBoardRetry] = useState(0);
+      const [boardConflict, setBoardConflict] = useState(null);
+      const boardView = { grants, companies, schedules: manualSchedules, logs, calendarHeight, companyOrder };
+      const boardLiveRef = useRef(boardView);
+      boardLiveRef.current = boardView;
+      const boardEditingRef = useRef(false);
+      boardEditingRef.current = !!(editingGrant || viewingGrant || editingCompany || assignmentNoteForm || meetingForm || drag || companyDrag);
+      function projectBoard(data) {
+        return { grants: data.grants, companies: data.companies, schedules: data.schedules || [], logs: data.logs || [], calendarHeight: data.calendarHeight, companyOrder: data.companyOrder || [] };
+      }
+      function applyBoardSnapshot(saved, initial = false) {
+        const dates = companyRegistrationDates(saved.companies, saved.logs || []);
+        const nextCompanies = normalizeCompanyList(saved.companies).map(company => {
+          const registeredDate = dates.get(company.id);
+          return !company.registeredDate && registeredDate ? { ...company, registeredDate } : company;
+        });
+        const height = Number(saved.calendarHeight);
+        setGrants(saved.grants);
+        setCompanies(confirmScheduledAssignments(nextCompanies, saved.schedules || []));
+        setCompanyOrder(reconcileCompanyOrder(saved.companyOrder, nextCompanies));
+        setSchedules(saved.schedules || []);
+        setLogs(Array.isArray(saved.logs) ? saved.logs.slice(0, LOG_LIMIT) : []);
+        if (Number.isFinite(height) && height > 0) setCalendarHeight(Math.max(80, Math.min(initial ? 240 : 320, height)));
+      }
       const companyOrderKey = companyOrder.join("|");
       useEffect(() => {
         const refreshDate = () => { setBoardDate(todayKey()); setRegistrationToday(registrationDateKey(new Date())); };
@@ -3934,30 +4026,49 @@
       }
       useEffect(() => {
         if ("scrollRestoration" in window.history) window.history.scrollRestoration = "manual";
-        storageRead().then((saved) => {
-          if (saved?.grants && saved?.companies) {
-            const registrationDates = companyRegistrationDates(saved.companies, saved.logs || []);
-            const normalizedCompanies = normalizeCompanyList(saved.companies).map(company => {
-              const registeredDate = registrationDates.get(company.id);
-              return !company.registeredDate && registeredDate ? { ...company, registeredDate } : company;
-            });
-            setGrants(saved.grants);
-            setCompanies(confirmScheduledAssignments(normalizedCompanies, saved.schedules || []));
-            setCompanyOrder(reconcileCompanyOrder(saved.companyOrder, normalizedCompanies));
-            setSchedules(saved.schedules || []);
-            setLogs(Array.isArray(saved.logs) ? saved.logs.slice(0, LOG_LIMIT) : []);
-            const savedCalendarHeight = Number(saved.calendarHeight);
-            if (Number.isFinite(savedCalendarHeight) && savedCalendarHeight > 0) {
-              setCalendarHeight(Math.max(80, Math.min(240, savedCalendarHeight)));
+        let active = true;
+        let reading = false;
+        async function refresh() {
+          if (reading || boardSaveBusyRef.current || boardEditingRef.current || boardConflictRef.current) return;
+          if (boardSavedViewRef.current && !syncCore.equal(boardLiveRef.current, boardSavedViewRef.current)) return;
+          reading = true;
+          const before = boardLiveRef.current;
+          const saved = await storageRead({ remember: false, revision: boardRevisionRef.current });
+          reading = false;
+          if (!active || boardSaveBusyRef.current || boardEditingRef.current || !syncCore.equal(before, boardLiveRef.current)) return;
+          if (saved?.unchanged) { setSaveStatus({ state: "saved", text: "서버 저장 완료" }); return; }
+          if (validBoard(saved)) {
+            const initial = !boardBaseRef.current;
+            let next = saved;
+            if (initial) {
+              const pending = readBoardDraft();
+              if (validBoard(pending?.base) && validBoard(pending?.draft)) {
+                const recovered = syncCore.merge(pending.base, { ...pending.base, ...pending.draft }, saved, { logLimit: LOG_LIMIT });
+                next = recovered.data;
+                if (!recovered.ok) { boardConflictRef.current = true; setBoardConflict(recovered); }
+                boardBaseRef.current = recovered.ok ? saved : pending.base;
+              }
             }
+            if (!boardConflictRef.current) boardBaseRef.current = saved;
+            boardRevisionRef.current = saved.__boardRevision;
+            lastBoardRead = syncCore.clone(saved);
+            boardSavedViewRef.current = projectBoard(saved);
+            const changed = !syncCore.equal(projectBoard(next), boardLiveRef.current);
+            if (changed) applyBoardSnapshot(next, initial);
             setStorageReady(true);
+            setSaveStatus(boardConflictRef.current ? { state: "error", text: "동시 수정 확인 필요" } : changed ? { state: "idle", text: "서버 데이터 확인 완료" } : { state: "saved", text: supabaseClient ? "서버 저장 완료" : "임시 저장 완료" });
           } else {
-            setStorageReady(false);
-            setSaveStatus({ state: "error", text: "서버 데이터 확인 필요" });
-            setToast("서버 데이터를 불러오지 못해 자동저장을 막았습니다.");
+            if (!boardBaseRef.current) setStorageReady(false);
+            setSaveStatus({ state: "error", text: "서버 연결 재확인 중" });
           }
           setLoaded(true);
-        });
+        }
+        refresh();
+        const timer = window.setInterval(refresh, 10000);
+        window.addEventListener("focus", refresh);
+        window.addEventListener("online", refresh);
+        document.addEventListener("visibilitychange", refresh);
+        return () => { active = false; window.clearInterval(timer); window.removeEventListener("focus", refresh); window.removeEventListener("online", refresh); document.removeEventListener("visibilitychange", refresh); };
       }, []);
       useEffect(() => {
         if (!loaded) return;
@@ -3968,23 +4079,54 @@
       }, [companies, loaded]);
       useEffect(() => {
         if (!loaded || !storageReady) return;
-        const requestId = saveRequestRef.current + 1;
-        saveRequestRef.current = requestId;
+        const draft = boardLiveRef.current;
+        if (syncCore.equal(draft, boardSavedViewRef.current)) {
+          if (!boardConflictRef.current && !boardSaveBusyRef.current) setSaveStatus({ state: "saved", text: supabaseClient ? "서버 저장 완료" : "임시 저장 완료" });
+          return;
+        }
+        rememberBoardDraft(boardBaseRef.current, draft);
+        if (boardSaveBusyRef.current || boardConflictRef.current) return;
         setSaveStatus({ state: "saving", text: "저장 중" });
         const timer = window.setTimeout(async () => {
-          const result = await storageWrite({ grants, companies, schedules: manualSchedules, logs, calendarHeight, companyOrder });
-          if (saveRequestRef.current !== requestId) return;
-          if (result?.remote) {
-            setSaveStatus({ state: "saved", text: "서버 저장 완료" });
-          } else if (result?.ok) {
-            setSaveStatus({ state: "saved", text: "임시 저장 완료" });
+          boardSaveBusyRef.current = true;
+          const result = await storageWrite(draft, { base: boardBaseRef.current, prefer: boardPreferenceRef.current });
+          boardPreferenceRef.current = null;
+          if (result.ok) {
+            const current = boardLiveRef.current;
+            const rebased = syncCore.merge(draft, current, projectBoard(result.data), { logLimit: LOG_LIMIT });
+            boardSavedViewRef.current = projectBoard(result.data);
+            boardRevisionRef.current = result.revision;
+            boardBaseRef.current = rebased.ok ? result.data : draft;
+            if (!syncCore.equal(rebased.data, current)) applyBoardSnapshot(rebased.data);
+            if (!rebased.ok) { boardConflictRef.current = true; setBoardConflict(rebased); }
+            setSaveStatus(rebased.ok ? { state: "saved", text: result.remote ? "서버 저장 완료" : "임시 저장 완료" } : { state: "error", text: "동시 수정 확인 필요" });
+          } else if (result.conflict) {
+            boardConflictRef.current = true;
+            setBoardConflict(result);
+            setSaveStatus({ state: "error", text: "동시 수정 확인 필요" });
           } else {
             setSaveStatus({ state: "error", text: "서버 저장 실패" });
-            setToast("서버 저장 실패. 새로고침하면 최근 수정 내용이 사라질 수 있습니다.");
+            setToast(result.backedUp ? "서버 저장 실패. 수정 내용은 이 기기에 보관하고 다시 시도합니다." : "서버 저장과 임시 보관에 실패했습니다. 이 창을 닫지 말고 연결을 확인해 주세요.");
           }
+          boardSaveBusyRef.current = false;
+          if (result.ok) setBoardRetry(value => value + 1);
         }, 500);
         return () => window.clearTimeout(timer);
-      }, [grants, companies, manualSchedules, logs, calendarHeight, companyOrder, loaded, storageReady]);
+      }, [grants, companies, manualSchedules, logs, calendarHeight, companyOrder, loaded, storageReady, boardRetry]);
+      useEffect(() => {
+        if (saveStatus.state !== "error" || !storageReady || boardConflictRef.current) return;
+        const timer = window.setTimeout(() => setBoardRetry(value => value + 1), 8000);
+        return () => window.clearTimeout(timer);
+      }, [saveStatus, storageReady, boardRetry]);
+      useEffect(() => {
+        function warn(event) {
+          if (!boardBaseRef.current || (!boardSaveBusyRef.current && syncCore.equal(boardLiveRef.current, boardSavedViewRef.current))) return;
+          rememberBoardDraft(boardBaseRef.current, boardLiveRef.current);
+          event.preventDefault(); event.returnValue = "";
+        }
+        window.addEventListener("beforeunload", warn);
+        return () => window.removeEventListener("beforeunload", warn);
+      }, []);
       useEffect(() => {
         let active = true;
         async function refresh() {
@@ -4948,6 +5090,7 @@
         clearStatusClickTimer();
         setStatusMenuKey((value) => value === menuKey ? "" : menuKey);
       }
+      if (!loaded || !storageReady) return <div className="customer-page"><div className="customer-shell"><div className="customer-empty">{!loaded ? "서버 데이터를 불러오는 중입니다" : "서버 데이터 확인에 실패해 편집과 저장을 중지했습니다"}{loaded && <div><button className="text-btn" onClick={() => window.dispatchEvent(new Event("focus"))}>다시 연결</button></div>}</div></div></div>;
       return (
         <div className="grant-app" onClick={() => setStatusMenuKey("")}>
           <aside className="left-panel">
@@ -5286,6 +5429,12 @@
             </div>
           )}
           {toast && <div className="toast">{toast}</div>}
+          {boardConflict && <div className="modal-backdrop"><div className="modal" style={{ width: "620px" }}>
+            <h2>동시 수정 확인</h2>
+            <p>같은 항목을 다른 기기에서도 수정했습니다. 충돌하지 않은 변경은 모두 유지하며, 아래 항목에 적용할 내용을 선택해 주세요.</p>
+            <div style={{ maxHeight: "260px", overflow: "auto", fontSize: "12px", overflowWrap: "anywhere" }}>{(boardConflict.conflicts || []).map((item, index) => <div key={index} style={{ borderBottom: "1px solid #e5e7eb", padding: "10px 0" }}><strong>{item.path}</strong><div>내 수정: {JSON.stringify(item.local)?.slice(0, 500)}</div><div>다른 기기: {JSON.stringify(item.remote)?.slice(0, 500)}</div></div>)}</div>
+            <div className="modal-actions"><div className="action-right">{[["remote", "다른 기기 수정 우선 저장"], ["local", "내 수정 우선 저장"]].map(([value, label]) => <button key={value} className="text-btn" onClick={() => { boardPreferenceRef.current = value; boardConflictRef.current = false; setBoardConflict(null); setBoardRetry(count => count + 1); }}>{label}</button>)}</div></div>
+          </div></div>}
           {viewingGrant && <GrantModal grant={viewingGrant} onClose={() => setViewingGrant(null)} onSave={(form) => { saveGrant(form); setViewingGrant(null); }} onDelete={viewingGrant.id ? (id) => { if (!window.confirm || window.confirm("이 지원사업을 삭제할까요?")) { deleteGrant(id); setViewingGrant(null); notify("삭제됨"); } } : null} />}
           {editingGrant && <GrantModal grant={editingGrant} onClose={() => setEditingGrant(null)} onSave={saveGrant} onDelete={editingGrant.id ? deleteGrant : null} />}
           {editingCompany && <CompanyModal company={editingCompany} onClose={() => setEditingCompany(null)} onSave={saveCompany} onDelete={editingCompany.id ? deleteCompany : null} />}
@@ -5570,6 +5719,7 @@
       }
     }
     function App() {
+      if (!syncCore) return <div className="customer-page"><div className="customer-shell"><div className="customer-empty">저장 보호 파일을 불러오지 못해 편집을 중지했습니다. 새로고침해 주세요.</div></div></div>;
       const companyId = requestedCompanyId();
       return companyId ? <CustomerGrantPage companyId={companyId} /> : <StartupGrantBoard />;
     }
