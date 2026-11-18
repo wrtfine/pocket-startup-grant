@@ -2577,6 +2577,7 @@
   <script type="text/babel">
     const { useEffect, useMemo, useRef, useState } = React;
     const STORAGE_KEY = "startup-grant-board-notion-v1";
+    const LOG_LIMIT = 50;
     const SUPABASE_URL = "https://yoznpullugdnjrszhkon.supabase.co";
     const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inlvem5wdWxsdWdkbmpyc3poa29uIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODA1OTA1ODEsImV4cCI6MjA5NjE2NjU4MX0.PCgNJWU0jihPDeAuU5gS5iwburWuzmTCOmLGdPTookw";
     const supabaseClient = window.supabase?.createClient?.(SUPABASE_URL, SUPABASE_ANON_KEY);
@@ -3155,14 +3156,14 @@
       return grantsAreSeed && companiesAreSeed && !hasWorkData;
     }
     async function storageWrite(data) {
-      let payload = data;
+      let payload = data && Array.isArray(data.logs) ? { ...data, logs: data.logs.slice(0, LOG_LIMIT) } : data;
       if (isSeedLikePayload(payload)) {
         console.warn("Refused to write seed-like payload before remote data is confirmed");
         return { ok: false, remote: false, blocked: true, error: new Error("seed-like payload blocked") };
       }
       if (data && !Object.prototype.hasOwnProperty.call(data, "customerProfiles")) {
         const saved = await storageRead();
-        if (saved?.customerProfiles || saved?.customerSchedules) payload = { ...data, customerProfiles: saved?.customerProfiles || {}, customerSchedules: saved?.customerSchedules || {} };
+        if (saved?.customerProfiles || saved?.customerSchedules) payload = { ...payload, customerProfiles: saved?.customerProfiles || {}, customerSchedules: saved?.customerSchedules || {} };
       }
       if (supabaseClient) {
         try {
@@ -3416,7 +3417,7 @@
               undone: false
             },
             ...(saved?.logs || [])
-          ].slice(0, 300),
+          ].slice(0, LOG_LIMIT),
           calendarHeight: saved?.calendarHeight,
           customerProfiles: saved?.customerProfiles || customerProfiles
         };
@@ -3480,7 +3481,7 @@
               undone: false
             },
             ...(saved?.logs || [])
-          ].slice(0, 300),
+          ].slice(0, LOG_LIMIT),
           calendarHeight: saved?.calendarHeight,
           customerProfiles: saved?.customerProfiles || customerProfiles
         };
@@ -3518,7 +3519,7 @@
               undone: false
             },
             ...(saved?.logs || [])
-          ].slice(0, 300),
+          ].slice(0, LOG_LIMIT),
           calendarHeight: saved?.calendarHeight,
           customerProfiles: saved?.customerProfiles || customerProfiles
         };
@@ -3554,7 +3555,7 @@
               undone: false
             },
             ...(saved?.logs || [])
-          ].slice(0, 300),
+          ].slice(0, LOG_LIMIT),
           calendarHeight: saved?.calendarHeight,
           customerProfiles: saved?.customerProfiles || customerProfiles
         };
@@ -3944,7 +3945,7 @@
             setCompanies(confirmScheduledAssignments(normalizedCompanies, saved.schedules || []));
             setCompanyOrder(reconcileCompanyOrder(saved.companyOrder, normalizedCompanies));
             setSchedules(saved.schedules || []);
-            setLogs(saved.logs || []);
+            setLogs(Array.isArray(saved.logs) ? saved.logs.slice(0, LOG_LIMIT) : []);
             const savedCalendarHeight = Number(saved.calendarHeight);
             if (Number.isFinite(savedCalendarHeight) && savedCalendarHeight > 0) {
               setCalendarHeight(Math.max(80, Math.min(240, savedCalendarHeight)));
@@ -4126,7 +4127,7 @@
       }, [displayCompanies]);
       function notify(message) { setToast(message); }
       function addLog(action, detail, undo) {
-        setLogs((current) => [{ id: uid("log"), time: new Date().toISOString(), action, detail, undo, undone: false }, ...current].slice(0, 300));
+        setLogs((current) => [{ id: uid("log"), time: new Date().toISOString(), action, detail, undo, undone: false }, ...current].slice(0, LOG_LIMIT));
       }
       function markLogUndone(id) {
         setLogs((current) => current.map((item) => item.id === id ? { ...item, undone: true, detail: `${item.detail} / 취소됨` } : item));
