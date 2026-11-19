@@ -2922,6 +2922,19 @@
       threeYearsLater.setFullYear(threeYearsLater.getFullYear() + 3);
       return today < threeYearsLater ? "3년 이내" : "3년 이상";
     }
+    function companyBusinessAgeLabel(foundedDate, fallbackAge) {
+      const value = String(foundedDate || "").trim();
+      if (!value) return !fallbackAge || ["예비", "예비창업자"].includes(fallbackAge) ? "예비" : "설립일 미입력";
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(value) || registrationDateKey(value) !== value) return "설립일 확인";
+      const founded = parseDateKey(value);
+      const today = parseDateKey(todayKey());
+      if (founded > today) return "예비";
+      let months = (today.getFullYear() - founded.getFullYear()) * 12 + today.getMonth() - founded.getMonth();
+      // A month-end founding anniversary falls on the last day of shorter months.
+      const lastDay = new Date(today.getFullYear(), today.getMonth() + 1, 0).getDate();
+      if (today.getDate() < Math.min(founded.getDate(), lastDay)) months -= 1;
+      return `${Math.floor(months / 12)}년 ${months % 12}개월`;
+    }
     function foundedDateLabel(foundedDate) {
       return foundedDate ? `창립 ${foundedDate}` : "창립 예정";
     }
@@ -5318,7 +5331,7 @@
                     </div>
                     <div className="badges">
                       <span className="badge">{company.region || "지역 X"}</span>
-                      <span className="badge">{companyAgeLabel(company.foundedDate, company.age)}</span>
+                      <span className="badge company-business-age" title={company.foundedDate ? `설립 ${company.foundedDate}` : "설립일 미입력"}>{companyBusinessAgeLabel(company.foundedDate, company.age)}</span>
                       <div className="dots" onClick={(e) => e.stopPropagation()}>
                         {monthlyStatuses(company, grantMap).map((status, index) => (
                           <button key={index} className={`dot ${status}`} title={statusLabel(status)} />
