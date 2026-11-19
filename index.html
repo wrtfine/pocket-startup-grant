@@ -320,7 +320,15 @@
       gap: 6px;
       flex-wrap: wrap;
     }
-    .company-board-sort { height: 30px; max-width: 100%; border: 1px solid #d7e0e4; border-radius: 6px; background: #ffffff; color: #47565e; padding: 0 7px; font: inherit; font-size: 11px; }
+    .company-view-controls { flex: 0 0 auto; padding: 7px 12px; border-bottom: 1px solid #e2e7ea; background: #f9fbfb; }
+    .company-sort-options, .company-focus-options { display: flex; align-items: center; flex-wrap: wrap; gap: 5px; }
+    .company-focus-options { margin-top: 6px; }
+    .company-view-button { min-height: 27px; padding: 4px 9px; border: 1px solid transparent; border-radius: 5px; background: transparent; color: #68757d; font: inherit; font-size: 11px; line-height: 17px; cursor: pointer; }
+    .company-view-button:hover { background: #eef1f3; color: #172026; }
+    .company-view-button[aria-pressed="true"] { background: #ffffff; border-color: #b9c4cb; color: #172026; box-shadow: 0 1px 2px rgba(15, 23, 42, 0.06); }
+    .company-focus-options .company-view-button[aria-pressed="true"] { border-color: #7394b7; background: #edf4fb; color: #254a70; }
+    .company-view-button:focus-visible { outline: 2px solid #7394b7; outline-offset: 2px; }
+    .company-age-direction { display: inline-flex; gap: 2px; padding-right: 7px; margin-right: 2px; border-right: 1px solid #dfe5e8; }
     .board-tab {
       height: 30px;
       border: 1px solid #d7e0e4;
@@ -405,6 +413,11 @@
       border-color: #7da0ff;
       box-shadow: 0 0 0 2px rgba(37, 99, 235, 0.12);
     }
+    .company-column.company-match { border-color: #7394b7; box-shadow: inset 0 0 0 1px #7394b7; }
+    .company-column.company-match .company-name { color: #254a70; }
+    .company-column.company-other { border-color: #e4e8eb; }
+    .company-column.company-secondary.company-match { border-color: #909090; box-shadow: inset 0 0 0 1px #909090; }
+    .company-column.company-secondary.company-match .company-name { color: #454545; }
     .company-insert-marker {
       position: fixed;
       z-index: 56;
@@ -1549,17 +1562,6 @@
       font: inherit;
       font-size: 13px;
     }
-    .company-status-sort {
-      height: 34px;
-      max-width: 100%;
-      padding: 0 9px;
-      border: 1px solid #d7e0e4;
-      border-radius: 6px;
-      background: #ffffff;
-      color: #47565e;
-      font: inherit;
-      font-size: 13px;
-    }
     .company-status-table {
       width: 100%;
       min-width: 680px;
@@ -1631,6 +1633,12 @@
     .company-status-table .status-secondary .status-unlimited { color: #707070; }
     .company-status-table .status-secondary .status-remaining { font-weight: 400; }
     .company-status-table .status-secondary .status-round-badge { background: #e7e7e7; color: #656565; }
+    .company-status-table tbody tr.company-match { background: #edf4fb; }
+    .company-status-table tbody tr.company-match:hover { background: #e5eff9; }
+    .company-status-table tr.company-match .status-company-cell { box-shadow: inset 3px 0 #7394b7; }
+    .company-status-table tbody tr.status-secondary.company-match { background: #e9e9e9; }
+    .company-status-table tbody tr.status-secondary.company-match:hover { background: #e3e3e3; }
+    .company-status-table tr.status-secondary.company-match .status-company-cell { box-shadow: inset 3px 0 #909090; }
     .company-status-table .status-empty { text-align: center; padding: 32px 12px; color: #8a959d; }
     .log-panel {
       flex: 1;
@@ -2875,10 +2883,12 @@
     function grantListDisplayTitle(grant) {
       return `${isNewGrantRibbon(grant) ? "🎀 " : ""}${grant?.title || ""}`;
     }
-    const COMPANY_DETAIL_SORT_OPTIONS = [
-      { value: "region", label: "지역별" },
-      { value: "age-oldest", label: "업력 오래된 순" },
-      { value: "age-newest", label: "업력 짧은 순" }
+    const COMPANY_SORT_OPTIONS = [
+      { value: "manual", label: "기본순", title: "기본순" },
+      { value: "remaining", label: "남은 횟수순", title: "남은 횟수 많은 순" },
+      { value: "oldest", label: "등록일순", title: "등록일 오래된 순" },
+      { value: "region", label: "지역별", title: "지역별" },
+      { value: "age-oldest", label: "업력별", title: "업력별" }
     ];
     const companyRegionCollator = new Intl.Collator("ko", { numeric: true, sensitivity: "base" });
     function companyRegionKey(company) {
@@ -2897,6 +2907,11 @@
       const rightKey = mode === "region" ? companyRegionKey(right) : companyFoundedSortKey(right);
       if (!leftKey || !rightKey) return leftKey ? -1 : rightKey ? 1 : 0;
       return mode === "region" ? companyRegionCollator.compare(leftKey, rightKey) : mode === "age-newest" ? rightKey.localeCompare(leftKey) : leftKey.localeCompare(rightKey);
+    }
+    function companyAgeGroup(company) {
+      if (!String(company.foundedDate || "").trim()) return ["3년 이내", "3년 이상"].includes(company.age) ? company.age : "예비";
+      if (!companyFoundedSortKey(company)) return "확인 필요";
+      return companyAgeLabel(company.foundedDate);
     }
     function companyAgeLabel(foundedDate, fallbackAge) {
       if (!foundedDate) return fallbackAge === "예비창업자" ? "예비" : (fallbackAge || "예비");
@@ -3972,8 +3987,8 @@
       const [meetingForm, setMeetingForm] = useState(null);
       const [activeCompanyTab, setActiveCompanyTab] = useState("all");
       const [companyStatusQuery, setCompanyStatusQuery] = useState("");
-      const [companyStatusSort, setCompanyStatusSort] = useState("remaining");
-      const [companyBoardSort, setCompanyBoardSort] = useState("manual");
+      const [companySort, setCompanySort] = useState("manual");
+      const [companyFocus, setCompanyFocus] = useState("");
       const [showPastGrants, setShowPastGrants] = useState(false);
       const [boardDate, setBoardDate] = useState(todayKey);
       const [registrationToday, setRegistrationToday] = useState(() => registrationDateKey(new Date()));
@@ -4263,30 +4278,46 @@
       })), [visibleGrants]);
       const orderedCompanies = useMemo(() => orderCompaniesByIds(companies, companyOrder), [companies, companyOrder]);
       const registrationDates = useMemo(() => companyRegistrationDates(companies, logs), [companies, logs]);
+      const ageSort = companySort.startsWith("age-");
+      const companyMatchesFocus = company => !!companyFocus && (companySort === "region" ? (companyRegionKey(company) || "지역 X") === companyFocus : ageSort && companyAgeGroup(company) === companyFocus);
+      const companyEmphasis = company => companyFocus ? companyMatchesFocus(company) ? "company-match" : "company-other" : "";
+      const canMoveCompany = companySort === "manual" && !companyFocus;
+      const regionOptions = useMemo(() => {
+        const regions = new Set(orderedCompanies.filter(company => activeCompanyTab === "ended" ? company.contractEnded : !company.contractEnded).map(company => companyRegionKey(company) || "지역 X"));
+        return [...regions].sort((left, right) => left === "지역 X" ? 1 : right === "지역 X" ? -1 : companyRegionCollator.compare(left, right));
+      }, [orderedCompanies, activeCompanyTab]);
+      // Both views consume this sequence; presentation changes never rewrite companyOrder.
+      const rankedCompanies = useMemo(() => {
+        const boardIndex = new Map(orderedCompanies.map((company, index) => [company.id, index]));
+        const remaining = new Map(orderedCompanies.map(company => [company.id, isPocketCompany(company) ? -1 : Math.max(0, Math.max(1, Number(company.monthlyTarget) || 1) - monthlyDoneCount(company, grantMap))]));
+        const compare = (left, right) => {
+          const emphasis = Number(companyMatchesFocus(right)) - Number(companyMatchesFocus(left));
+          const difference = companySort === "region" || ageSort ? compareCompanyDetails(left, right, companySort) : companySort === "oldest"
+            ? (registrationDates.get(left.id) || "9999-99-99").localeCompare(registrationDates.get(right.id) || "9999-99-99")
+            : companySort === "remaining" ? remaining.get(right.id) - remaining.get(left.id) : 0;
+          return emphasis || difference || boardIndex.get(left.id) - boardIndex.get(right.id);
+        };
+        return COMPANY_TYPE_OPTIONS.flatMap(option => orderedCompanies.filter(company => companyTypeValue(company) === option.value).sort(compare));
+      }, [orderedCompanies, companySort, companyFocus, registrationDates, grantMap, boardDate]);
       const statusCompanies = useMemo(() => {
         const query = companyStatusQuery.trim().toLowerCase();
-        const filtered = orderedCompanies.filter(company => !company.contractEnded && (!query || String(company.name || "").toLowerCase().includes(query)));
-        const boardIndex = new Map(orderedCompanies.map((company, index) => [company.id, index]));
-        const remaining = new Map(filtered.map(company => [company.id, isPocketCompany(company) ? -1 : Math.max(0, Math.max(1, Number(company.monthlyTarget) || 1) - monthlyDoneCount(company, grantMap))]));
-        const compare = (left, right) => {
-          const difference = COMPANY_DETAIL_SORT_OPTIONS.some(option => option.value === companyStatusSort) ? compareCompanyDetails(left, right, companyStatusSort) : companyStatusSort === "oldest"
-            ? (registrationDates.get(left.id) || "9999-99-99").localeCompare(registrationDates.get(right.id) || "9999-99-99")
-            : remaining.get(right.id) - remaining.get(left.id);
-          return difference || boardIndex.get(left.id) - boardIndex.get(right.id);
-        };
-        return COMPANY_TYPE_OPTIONS.flatMap(option => filtered.filter(company => companyTypeValue(company) === option.value).sort(compare));
-      }, [orderedCompanies, companyStatusQuery, companyStatusSort, registrationDates, grantMap, boardDate]);
+        return rankedCompanies.filter(company => !company.contractEnded && (!query || String(company.name || "").toLowerCase().includes(query)));
+      }, [rankedCompanies, companyStatusQuery]);
       const visibleCompanies = useMemo(() => {
-        const filtered = orderedCompanies.filter((company) => {
+        return rankedCompanies.filter((company) => {
           if (activeCompanyTab === "log") return false;
           if (activeCompanyTab === "ended") return !!company.contractEnded;
           if (company.contractEnded) return false;
           return true;
         });
-        if (companyBoardSort === "manual") return filtered;
-        const index = new Map(orderedCompanies.map((company, position) => [company.id, position]));
-        return filtered.sort((left, right) => compareCompanyDetails(left, right, companyBoardSort) || index.get(left.id) - index.get(right.id));
-      }, [orderedCompanies, activeCompanyTab, companyBoardSort, boardDate]);
+      }, [rankedCompanies, activeCompanyTab]);
+      function chooseCompanySort(mode) {
+        setCompanySort(mode);
+        setCompanyFocus("");
+      }
+      useEffect(() => {
+        companyRowRef.current?.scrollTo({ left: 0, top: 0 });
+      }, [companySort, companyFocus]);
       const displayCompanies = useMemo(() => {
         return visibleCompanies.map((company) => ({ type: "company", company }));
       }, [visibleCompanies, companyDrag]);
@@ -4792,7 +4823,7 @@
           overCompanyId: "",
           insertAfter: false,
           insertVisibleIndex: Math.max(0, visibleIndex),
-          marker: companyBoardSort === "manual" && rect ? { left: rect.left - 7, top: rect.top, height: rect.height } : null
+          marker: canMoveCompany && rect ? { left: rect.left - 7, top: rect.top, height: rect.height } : null
         });
       }
       function calendarDateFromPoint(x, y) {
@@ -4826,11 +4857,12 @@
         return "";
       }
       function companyInsertPlacement(event) {
-        if (companyBoardSort !== "manual") return null;
+        if (!canMoveCompany) return null;
+        const movingCompany = companies.find(company => company.id === companyDrag?.companyId);
         const nodes = Array.from(document.querySelectorAll(".company-column[data-company-id]"));
         const cards = nodes
           .map((node) => ({ node, id: node.dataset.companyId, rect: node.getBoundingClientRect() }))
-          .filter((card) => card.id && card.id !== companyDrag?.companyId);
+          .filter((card) => card.id && card.id !== companyDrag?.companyId && card.node.dataset.companyType === companyTypeValue(movingCompany || {}));
         if (!cards.length) return null;
 
         const rowTolerance = 24;
@@ -4870,10 +4902,9 @@
           }
         }
 
-        const rowIndex = rows.indexOf(row);
         const beforeInRow = row.cards[rowInsertIndex];
         const afterInRow = row.cards[rowInsertIndex - 1];
-        const insertVisibleIndex = Math.max(0, Math.min(visibleCompanies.length, rowIndex + rowInsertIndex * 2));
+        const insertVisibleIndex = beforeInRow ? visibleCompanies.findIndex(company => company.id === beforeInRow.id) : Math.min(visibleCompanies.length, visibleCompanies.findIndex(company => company.id === afterInRow.id) + 2);
 
         const markerBase = beforeInRow || afterInRow || row.cards[0];
         const markerLeft = beforeInRow
@@ -4976,7 +5007,7 @@
             overCompanyId: placement?.companyId || "",
             insertAfter: !!placement?.insertAfter,
             insertVisibleIndex: placement?.insertVisibleIndex ?? current.insertVisibleIndex,
-            marker: companyBoardSort === "manual" ? placement?.marker || current.marker : null
+            marker: canMoveCompany ? placement?.marker || current.marker : null
           } : null);
         }
         function up(event) {
@@ -4995,24 +5026,25 @@
             const previousOrder = reconcileCompanyOrder(companyOrder, companies);
             setCompanies((currentCompanies) => {
               const currentMap = Object.fromEntries(currentCompanies.map((company) => [company.id, company]));
-              const visibleIds = visibleCompanies.map((company) => company.id);
               const movingId = current.companyId;
               const moving = currentMap[movingId];
               if (!moving) return currentCompanies;
+              const sameType = company => companyTypeValue(company) === companyTypeValue(moving);
+              const visibleIds = visibleCompanies.filter(sameType).map(company => company.id);
               const reorderedVisibleIds = visibleIds.filter((id) => id !== movingId);
-              const insertIndex = Math.max(0, Math.min(placement.insertVisibleIndex, reorderedVisibleIds.length));
+              const insertIndex = visibleCompanies.slice(0, placement.insertVisibleIndex).filter(company => company.id !== movingId && sameType(company)).length;
               reorderedVisibleIds.splice(insertIndex, 0, movingId);
               const reorderedSet = new Set(reorderedVisibleIds);
-              const reorderedCompanies = reorderedVisibleIds.map((id) => currentMap[id]).filter(Boolean);
-              const hiddenCompanies = currentCompanies.filter((company) => !reorderedSet.has(company.id));
-              const nextCompanies = [...reorderedCompanies, ...hiddenCompanies];
-              setCompanyOrder(nextCompanies.map((company) => company.id));
+              let slot = 0;
+              const nextOrder = reconcileCompanyOrder(companyOrder, currentCompanies).map(id => reorderedSet.has(id) ? reorderedVisibleIds[slot++] : id);
+              const nextCompanies = nextOrder.map(id => currentMap[id]).filter(Boolean);
+              setCompanyOrder(nextOrder);
               queueCompanyBoardStart(40);
               return nextCompanies;
             });
             const movedCompany = companies.find((company) => company.id === current.companyId);
             if (movedCompany) addLog("기업 위치 이동", movedCompany.name, { type: "moveCompany", order: previousOrder });
-          } else if (movedAtDrop && companyBoardSort !== "manual") {
+          } else if (movedAtDrop && !canMoveCompany) {
             notify("기업 위치 이동은 기본순에서 가능합니다");
           } else if (!movedAtDrop) {
             if (selectedGrantId) assignGrant(current.companyId, selectedGrantId);
@@ -5031,7 +5063,7 @@
           window.removeEventListener("pointerup", up);
           window.removeEventListener("pointercancel", up);
         };
-      }, [companyDrag, selectedGrantId, companies, companyOrder, visibleCompanies, companyBoardSort]);
+      }, [companyDrag, selectedGrantId, companies, companyOrder, visibleCompanies, canMoveCompany]);
       function updateCompany(id, patch) {
         setCompanies((current) => keepCompanyOrder(current, current.map((company) => company.id === id ? { ...company, ...patch } : company)));
       }
@@ -5202,19 +5234,30 @@
                   ].map(([key, label]) => (
                     <button key={key} className={`board-tab ${key === "log" ? "log-tab" : ""} ${activeCompanyTab === key ? "active" : ""}`} onClick={() => setActiveCompanyTab(key)}>{label}</button>
                   ))}
-                  {["all", "ended"].includes(activeCompanyTab) && <select className="company-board-sort" aria-label="기업 정렬" value={companyBoardSort} onChange={event => setCompanyBoardSort(event.target.value)}><option value="manual">기본순</option>{COMPANY_DETAIL_SORT_OPTIONS.map(option => <option key={option.value} value={option.value}>{option.label}</option>)}</select>}
                 </div>
               </div>
             </div>
+            {activeCompanyTab !== "log" && <div className="company-view-controls" aria-label="공통 기업 정렬 및 강조">
+              <div className="company-sort-options" role="group" aria-label="기업 정렬">
+                {COMPANY_SORT_OPTIONS.map(option => <button key={option.value} className="company-view-button" aria-label={option.title} title={option.title} aria-pressed={option.value === "age-oldest" ? ageSort : companySort === option.value} onClick={() => chooseCompanySort(option.value)}>{option.label}</button>)}
+              </div>
+              {companySort === "region" && <div className="company-focus-options" role="group" aria-label="지역 강조">
+                <button className="company-view-button" aria-pressed={!companyFocus} onClick={() => setCompanyFocus("")}>전체 지역</button>
+                {regionOptions.map(region => <button className="company-view-button" key={region} aria-pressed={companyFocus === region} onClick={() => setCompanyFocus(current => current === region ? "" : region)}>{region}</button>)}
+              </div>}
+              {ageSort && <div className="company-focus-options" role="group" aria-label="업력 강조">
+                <span className="company-age-direction" role="group" aria-label="업력 정렬 방향">
+                  <button className="company-view-button" aria-pressed={companySort === "age-oldest"} onClick={() => setCompanySort("age-oldest")}>오래된 순</button>
+                  <button className="company-view-button" aria-pressed={companySort === "age-newest"} onClick={() => setCompanySort("age-newest")}>짧은 순</button>
+                </span>
+                <button className="company-view-button" aria-pressed={!companyFocus} onClick={() => setCompanyFocus("")}>전체 업력</button>
+                {["예비", "3년 이내", "3년 이상", "확인 필요"].map(age => <button className="company-view-button" key={age} aria-pressed={companyFocus === age} onClick={() => setCompanyFocus(current => current === age ? "" : age)}>{age}</button>)}
+              </div>}
+            </div>}
             {activeCompanyTab === "status" ? (
               <section className="company-status-panel" aria-label="기업 지원사업 현황">
                 <div className="company-status-toolbar">
                   <input className="company-status-search" aria-label="현황 기업 검색" placeholder="기업 검색" value={companyStatusQuery} onChange={event => setCompanyStatusQuery(event.target.value)} />
-                  <select className="company-status-sort" aria-label="현황 정렬" value={companyStatusSort} onChange={event => setCompanyStatusSort(event.target.value)}>
-                    <option value="remaining">남은 횟수 많은 순</option>
-                    <option value="oldest">등록일 오래된 순</option>
-                    {COMPANY_DETAIL_SORT_OPTIONS.map(option => <option key={option.value} value={option.value}>{option.label}</option>)}
-                  </select>
                 </div>
                 <table className="company-status-table" aria-label="현재 회차 지원사업 잔여 횟수">
                   <thead><tr><th scope="col" className="status-number">순번</th><th scope="col" className="status-company-heading">기업</th><th scope="col" className="status-remaining-heading">남은 횟수</th><th scope="col" className="status-registration-heading">등록일 / 회차</th><th scope="col" className="status-quota-heading">계약횟수/완료</th></tr></thead>
@@ -5228,8 +5271,8 @@
                       const done = monthlyDoneCount(company, grantMap);
                       const remaining = Math.max(0, target - done);
                       const registeredDate = registrationDates.get(company.id) || "";
-                      const sortDetail = companyStatusSort === "region" ? company.region || "지역 X" : ["age-oldest", "age-newest"].includes(companyStatusSort) ? companyFoundedSortKey(company) ? `설립 ${company.foundedDate}` : company.foundedDate ? "설립일 확인 필요" : "예비" : "";
-                      return <tr key={company.id} data-status-company-id={company.id} data-company-type={type} className={`${secondary ? "status-secondary" : ""} ${secondaryStart ? "status-secondary-start" : ""}`}>
+                      const sortDetail = companySort === "region" ? company.region || "지역 X" : ageSort ? companyFoundedSortKey(company) ? `설립 ${company.foundedDate}` : companyAgeGroup(company) : "";
+                      return <tr key={company.id} data-status-company-id={company.id} data-company-type={type} className={`${secondary ? "status-secondary" : ""} ${secondaryStart ? "status-secondary-start" : ""} ${companyEmphasis(company)}`}>
                         <td className="status-number">{index + 1}</td>
                         <td className="status-company-cell"><div className="status-company-label"><span>{company.name}</span>{secondary && <span className="status-company-type">{COMPANY_TYPE_OPTIONS.find(option => option.value === type).label}</span>}</div>{sortDetail && <span className="status-company-sort-detail">{sortDetail}</span>}</td>
                         <td className={pocket ? "status-unlimited" : `status-remaining ${remaining === 0 ? "none" : ""}`} aria-label={pocket ? "남은 횟수 제한 없음" : `남은 횟수 ${remaining}회`}>{pocket ? "제한 없음" : `${remaining}회`}</td>
@@ -5263,7 +5306,7 @@
                   {line.map((item) => {
                     const company = item.company;
                     return (
-                    <section className={`company-column ${isPocketCompany(company) ? "pocket-company" : ""} ${companyDrag?.companyId === company.id ? "drag-target" : ""}`} key={company.id} data-company-id={company.id}>
+                    <section className={`company-column ${isPocketCompany(company) ? "pocket-company" : ""} ${companyTypeValue(company) !== "customer" ? "company-secondary" : ""} ${companyEmphasis(company)} ${companyDrag?.companyId === company.id ? "drag-target" : ""}`} key={company.id} data-company-id={company.id} data-company-type={companyTypeValue(company)}>
                   <div className="company-top" onPointerDown={(event) => startCompanyMove(event, company)} onDoubleClick={(event) => { event.preventDefault(); event.stopPropagation(); toggleCompanyPinned(company); }}>
                     <div className="company-controls">
                       {company.contractEnded && <span className="ended-pill">종료</span>}
