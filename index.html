@@ -382,9 +382,14 @@
       display: flex;
       align-items: stretch;
       gap: 9px;
+      height: 296px;
       min-height: 296px;
       flex: 0 0 296px;
     }
+    .company-band { display: flex; flex-direction: column; flex: 0 0 auto; width: max-content; min-width: 100%; }
+    .company-band-heading { position: sticky; left: 0; width: fit-content; margin: 0 0 6px; padding: 1px 3px; color: #68757d; font-size: 12px; line-height: 18px; font-weight: 500; }
+    .company-line.company-line-empty { height: 34px; min-height: 34px; flex-basis: 34px; align-items: center; }
+    .company-band-empty { margin: 0 3px; color: #98a2a8; font-size: 11px; }
     .company-column {
       width: 226px;
       min-width: 226px;
@@ -2884,11 +2889,18 @@
       return `${isNewGrantRibbon(grant) ? "🎀 " : ""}${grant?.title || ""}`;
     }
     const COMPANY_SORT_OPTIONS = [
-      { value: "manual", label: "기본순", title: "기본순" },
+      { value: "age-bands", label: "기본순", title: "기본순" },
+      { value: "manual", label: "수동순", title: "수동순" },
       { value: "remaining", label: "남은 횟수순", title: "남은 횟수 많은 순" },
       { value: "oldest", label: "등록일순", title: "등록일 오래된 순" },
       { value: "region", label: "지역별", title: "지역별" },
       { value: "age-oldest", label: "업력별", title: "업력별" }
+    ];
+    const COMPANY_AGE_BANDS = [
+      { key: "pre", label: "예비" },
+      { key: "first-year", label: "0년차" },
+      { key: "established", label: "1년차 이상" },
+      { key: "unknown", label: "설립일 확인" }
     ];
     const companyRegionCollator = new Intl.Collator("ko", { numeric: true, sensitivity: "base" });
     function companyRegionKey(company) {
@@ -2922,18 +2934,29 @@
       threeYearsLater.setFullYear(threeYearsLater.getFullYear() + 3);
       return today < threeYearsLater ? "3년 이내" : "3년 이상";
     }
-    function companyBusinessAgeLabel(foundedDate, fallbackAge) {
+    function companyBusinessAgeMonths(foundedDate) {
       const value = String(foundedDate || "").trim();
-      if (!value) return !fallbackAge || ["예비", "예비창업자"].includes(fallbackAge) ? "예비" : "설립일 미입력";
-      if (!/^\d{4}-\d{2}-\d{2}$/.test(value) || registrationDateKey(value) !== value) return "설립일 확인";
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(value) || registrationDateKey(value) !== value) return null;
       const founded = parseDateKey(value);
       const today = parseDateKey(todayKey());
-      if (founded > today) return "예비";
+      if (founded > today) return -1;
       let months = (today.getFullYear() - founded.getFullYear()) * 12 + today.getMonth() - founded.getMonth();
       // A month-end founding anniversary falls on the last day of shorter months.
       const lastDay = new Date(today.getFullYear(), today.getMonth() + 1, 0).getDate();
       if (today.getDate() < Math.min(founded.getDate(), lastDay)) months -= 1;
+      return months;
+    }
+    function companyBusinessAgeLabel(foundedDate, fallbackAge) {
+      if (!String(foundedDate || "").trim()) return !fallbackAge || ["예비", "예비창업자"].includes(fallbackAge) ? "예비" : "설립일 미입력";
+      const months = companyBusinessAgeMonths(foundedDate);
+      if (months === null) return "설립일 확인";
+      if (months < 0) return "예비";
       return `${Math.floor(months / 12)}년 ${months % 12}개월`;
+    }
+    function companyAgeBand(company) {
+      const months = companyBusinessAgeMonths(company.foundedDate);
+      if (months === null) return !String(company.foundedDate || "").trim() && (!company.age || ["예비", "예비창업자"].includes(company.age)) ? "pre" : "unknown";
+      return months < 0 ? "pre" : months < 12 ? "first-year" : "established";
     }
     function foundedDateLabel(foundedDate) {
       return foundedDate ? `창립 ${foundedDate}` : "창립 예정";
@@ -4000,7 +4023,7 @@
       const [meetingForm, setMeetingForm] = useState(null);
       const [activeCompanyTab, setActiveCompanyTab] = useState("all");
       const [companyStatusQuery, setCompanyStatusQuery] = useState("");
-      const [companySort, setCompanySort] = useState("manual");
+      const [companySort, setCompanySort] = useState("age-bands");
       const [companyFocus, setCompanyFocus] = useState("");
       const [showPastGrants, setShowPastGrants] = useState(false);
       const [boardDate, setBoardDate] = useState(todayKey);
@@ -4291,7 +4314,7 @@
       })), [visibleGrants]);
       const orderedCompanies = useMemo(() => orderCompaniesByIds(companies, companyOrder), [companies, companyOrder]);
       const registrationDates = useMemo(() => companyRegistrationDates(companies, logs), [companies, logs]);
-      const ageSort = companySort.startsWith("age-");
+      const ageSort = ["age-oldest", "age-newest"].includes(companySort);
       const companyMatchesFocus = company => !!companyFocus && (companySort === "region" ? (companyRegionKey(company) || "지역 X") === companyFocus : ageSort && companyAgeGroup(company) === companyFocus);
       const companyEmphasis = company => companyFocus ? companyMatchesFocus(company) ? "company-match" : "company-other" : "";
       const canMoveCompany = companySort === "manual" && !companyFocus;
@@ -4304,13 +4327,14 @@
         const boardIndex = new Map(orderedCompanies.map((company, index) => [company.id, index]));
         const remaining = new Map(orderedCompanies.map(company => [company.id, isPocketCompany(company) ? -1 : Math.max(0, Math.max(1, Number(company.monthlyTarget) || 1) - monthlyDoneCount(company, grantMap))]));
         const compare = (left, right) => {
+          if (companySort === "age-bands") return COMPANY_AGE_BANDS.findIndex(band => band.key === companyAgeBand(left)) - COMPANY_AGE_BANDS.findIndex(band => band.key === companyAgeBand(right)) || compareCompanyDetails(left, right, "age-newest") || boardIndex.get(left.id) - boardIndex.get(right.id);
           const emphasis = Number(companyMatchesFocus(right)) - Number(companyMatchesFocus(left));
           const difference = companySort === "region" || ageSort ? compareCompanyDetails(left, right, companySort) : companySort === "oldest"
             ? (registrationDates.get(left.id) || "9999-99-99").localeCompare(registrationDates.get(right.id) || "9999-99-99")
             : companySort === "remaining" ? remaining.get(right.id) - remaining.get(left.id) : 0;
           return emphasis || difference || boardIndex.get(left.id) - boardIndex.get(right.id);
         };
-        return COMPANY_TYPE_OPTIONS.flatMap(option => orderedCompanies.filter(company => companyTypeValue(company) === option.value).sort(compare));
+        return companySort === "age-bands" ? [...orderedCompanies].sort(compare) : COMPANY_TYPE_OPTIONS.flatMap(option => orderedCompanies.filter(company => companyTypeValue(company) === option.value).sort(compare));
       }, [orderedCompanies, companySort, companyFocus, registrationDates, grantMap, boardDate]);
       const statusCompanies = useMemo(() => {
         const query = companyStatusQuery.trim().toLowerCase();
@@ -4335,11 +4359,9 @@
         return visibleCompanies.map((company) => ({ type: "company", company }));
       }, [visibleCompanies, companyDrag]);
       const companyLines = useMemo(() => {
-        return [
-          displayCompanies.filter((_, index) => index % 2 === 0),
-          displayCompanies.filter((_, index) => index % 2 === 1)
-        ];
-      }, [displayCompanies]);
+        if (companySort === "age-bands") return COMPANY_AGE_BANDS.map(band => ({ ...band, items: displayCompanies.filter(item => companyAgeBand(item.company) === band.key) })).filter(band => band.key !== "unknown" || band.items.length);
+        return [0, 1].map(row => ({ key: `row-${row}`, label: "", items: displayCompanies.filter((_, index) => index % 2 === row) }));
+      }, [displayCompanies, companySort, boardDate]);
       function notify(message) { setToast(message); }
       function addLog(action, detail, undo) {
         setLogs((current) => [{ id: uid("log"), time: new Date().toISOString(), action, detail, undo, undone: false }, ...current].slice(0, LOG_LIMIT));
@@ -5058,7 +5080,7 @@
             const movedCompany = companies.find((company) => company.id === current.companyId);
             if (movedCompany) addLog("기업 위치 이동", movedCompany.name, { type: "moveCompany", order: previousOrder });
           } else if (movedAtDrop && !canMoveCompany) {
-            notify("기업 위치 이동은 기본순에서 가능합니다");
+            notify("기업 위치 이동은 수동순에서 가능합니다");
           } else if (!movedAtDrop) {
             if (selectedGrantId) assignGrant(current.companyId, selectedGrantId);
             else {
@@ -5278,13 +5300,13 @@
                     {statusCompanies.map((company, index) => {
                       const type = companyTypeValue(company);
                       const secondary = type !== "customer";
-                      const secondaryStart = secondary && index > 0 && companyTypeValue(statusCompanies[index - 1]) === "customer";
+                      const secondaryStart = index > 0 && (companySort === "age-bands" ? companyAgeBand(statusCompanies[index - 1]) !== companyAgeBand(company) : secondary && companyTypeValue(statusCompanies[index - 1]) === "customer");
                       const pocket = isPocketCompany(company);
                       const target = Math.max(1, Number(company.monthlyTarget) || 1);
                       const done = monthlyDoneCount(company, grantMap);
                       const remaining = Math.max(0, target - done);
                       const registeredDate = registrationDates.get(company.id) || "";
-                      const sortDetail = companySort === "region" ? company.region || "지역 X" : ageSort ? companyFoundedSortKey(company) ? `설립 ${company.foundedDate}` : companyAgeGroup(company) : "";
+                      const sortDetail = companySort === "age-bands" ? COMPANY_AGE_BANDS.find(band => band.key === companyAgeBand(company)).label : companySort === "region" ? company.region || "지역 X" : ageSort ? companyFoundedSortKey(company) ? `설립 ${company.foundedDate}` : companyAgeGroup(company) : "";
                       return <tr key={company.id} data-status-company-id={company.id} data-company-type={type} className={`${secondary ? "status-secondary" : ""} ${secondaryStart ? "status-secondary-start" : ""} ${companyEmphasis(company)}`}>
                         <td className="status-number">{index + 1}</td>
                         <td className="status-company-cell"><div className="status-company-label"><span>{company.name}</span>{secondary && <span className="status-company-type">{COMPANY_TYPE_OPTIONS.find(option => option.value === type).label}</span>}</div>{sortDetail && <span className="status-company-sort-detail">{sortDetail}</span>}</td>
@@ -5314,9 +5336,11 @@
             ) : (
             <React.Fragment>
             <div className="company-row" ref={companyRowRef}>
-              {companyLines.map((line, lineIndex) => (
-                <div className="company-line" key={lineIndex}>
-                  {line.map((item) => {
+              {companyLines.map(line => (
+                <div className="company-band" key={line.key} data-age-band={line.label ? line.key : undefined}>
+                  {line.label && <h3 className="company-band-heading">{line.label}</h3>}
+                  <div className={`company-line ${!line.items.length ? "company-line-empty" : ""}`}>
+                  {line.items.map((item) => {
                     const company = item.company;
                     return (
                     <section className={`company-column ${isPocketCompany(company) ? "pocket-company" : ""} ${companyTypeValue(company) !== "customer" ? "company-secondary" : ""} ${companyEmphasis(company)} ${companyDrag?.companyId === company.id ? "drag-target" : ""}`} key={company.id} data-company-id={company.id} data-company-type={companyTypeValue(company)}>
@@ -5424,6 +5448,8 @@
                     </section>
                     );
                   })}
+                  {!line.items.length && line.label && <span className="company-band-empty">기업 없음</span>}
+                  </div>
                 </div>
               ))}
             </div>
