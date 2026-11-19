@@ -390,6 +390,12 @@
     .company-band-heading { position: sticky; left: 0; width: fit-content; margin: 0 0 6px; padding: 1px 3px; color: #68757d; font-size: 12px; line-height: 18px; font-weight: 500; }
     .company-line.company-line-empty { height: 34px; min-height: 34px; flex-basis: 34px; align-items: center; }
     .company-band-empty { margin: 0 3px; color: #98a2a8; font-size: 11px; }
+    .company-row.age-band-columns { flex-direction: row; align-items: stretch; gap: 12px; min-height: 0; overflow-y: hidden; overflow-anchor: none; }
+    .age-band-columns > .company-band { min-width: 226px; height: 100%; }
+    .age-band-columns > .company-band + .company-band { padding-left: 12px; border-left: 1px solid #e1e6e9; }
+    .age-band-columns .company-line { display: grid; grid-auto-flow: column; grid-template-rows: repeat(2, minmax(0, 1fr)); grid-auto-columns: 226px; gap: 7px 9px; height: auto; min-height: 0; max-height: 599px; flex: 1 1 0; }
+    .age-band-columns .company-column { min-height: 0; }
+    .age-band-columns .company-line-empty { display: flex; min-width: 226px; align-items: flex-start; }
     .company-column {
       width: 226px;
       min-width: 226px;
@@ -5335,7 +5341,7 @@
               </div>
             ) : (
             <React.Fragment>
-            <div className="company-row" ref={companyRowRef}>
+            <div className={`company-row ${companySort === "age-bands" ? "age-band-columns" : ""}`} ref={companyRowRef}>
               {companyLines.map(line => (
                 <div className="company-band" key={line.key} data-age-band={line.label ? line.key : undefined}>
                   {line.label && <h3 className="company-band-heading">{line.label}</h3>}
