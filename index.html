@@ -2908,6 +2908,7 @@
       { key: "established", label: "1년차 이상" },
       { key: "unknown", label: "설립일 확인" }
     ];
+    const COMPANY_BOARD_BANDS = [...COMPANY_AGE_BANDS, ...COMPANY_TYPE_OPTIONS.filter(option => option.value !== "customer").map(option => ({ key: option.value, label: option.label }))];
     const companyRegionCollator = new Intl.Collator("ko", { numeric: true, sensitivity: "base" });
     function companyRegionKey(company) {
       const region = String(company.region || "").trim();
@@ -2963,6 +2964,10 @@
       const months = companyBusinessAgeMonths(company.foundedDate);
       if (months === null) return !String(company.foundedDate || "").trim() && (!company.age || ["예비", "예비창업자"].includes(company.age)) ? "pre" : "unknown";
       return months < 0 ? "pre" : months < 12 ? "first-year" : "established";
+    }
+    function companyBoardBand(company) {
+      const type = companyTypeValue(company);
+      return type === "customer" ? companyAgeBand(company) : type;
     }
     function foundedDateLabel(foundedDate) {
       return foundedDate ? `창립 ${foundedDate}` : "창립 예정";
@@ -4333,7 +4338,7 @@
         const boardIndex = new Map(orderedCompanies.map((company, index) => [company.id, index]));
         const remaining = new Map(orderedCompanies.map(company => [company.id, isPocketCompany(company) ? -1 : Math.max(0, Math.max(1, Number(company.monthlyTarget) || 1) - monthlyDoneCount(company, grantMap))]));
         const compare = (left, right) => {
-          if (companySort === "age-bands") return COMPANY_AGE_BANDS.findIndex(band => band.key === companyAgeBand(left)) - COMPANY_AGE_BANDS.findIndex(band => band.key === companyAgeBand(right)) || compareCompanyDetails(left, right, "age-newest") || boardIndex.get(left.id) - boardIndex.get(right.id);
+          if (companySort === "age-bands") return COMPANY_BOARD_BANDS.findIndex(band => band.key === companyBoardBand(left)) - COMPANY_BOARD_BANDS.findIndex(band => band.key === companyBoardBand(right)) || compareCompanyDetails(left, right, "age-newest") || boardIndex.get(left.id) - boardIndex.get(right.id);
           const emphasis = Number(companyMatchesFocus(right)) - Number(companyMatchesFocus(left));
           const difference = companySort === "region" || ageSort ? compareCompanyDetails(left, right, companySort) : companySort === "oldest"
             ? (registrationDates.get(left.id) || "9999-99-99").localeCompare(registrationDates.get(right.id) || "9999-99-99")
@@ -4365,7 +4370,7 @@
         return visibleCompanies.map((company) => ({ type: "company", company }));
       }, [visibleCompanies, companyDrag]);
       const companyLines = useMemo(() => {
-        if (companySort === "age-bands") return COMPANY_AGE_BANDS.map(band => ({ ...band, items: displayCompanies.filter(item => companyAgeBand(item.company) === band.key) })).filter(band => band.key !== "unknown" || band.items.length);
+        if (companySort === "age-bands") return COMPANY_BOARD_BANDS.map(band => ({ ...band, items: displayCompanies.filter(item => companyBoardBand(item.company) === band.key) })).filter(band => ["pre", "first-year", "established"].includes(band.key) || band.items.length);
         return [0, 1].map(row => ({ key: `row-${row}`, label: "", items: displayCompanies.filter((_, index) => index % 2 === row) }));
       }, [displayCompanies, companySort, boardDate]);
       function notify(message) { setToast(message); }
@@ -5306,13 +5311,13 @@
                     {statusCompanies.map((company, index) => {
                       const type = companyTypeValue(company);
                       const secondary = type !== "customer";
-                      const secondaryStart = index > 0 && (companySort === "age-bands" ? companyAgeBand(statusCompanies[index - 1]) !== companyAgeBand(company) : secondary && companyTypeValue(statusCompanies[index - 1]) === "customer");
+                      const secondaryStart = index > 0 && (companySort === "age-bands" ? companyBoardBand(statusCompanies[index - 1]) !== companyBoardBand(company) : secondary && companyTypeValue(statusCompanies[index - 1]) === "customer");
                       const pocket = isPocketCompany(company);
                       const target = Math.max(1, Number(company.monthlyTarget) || 1);
                       const done = monthlyDoneCount(company, grantMap);
                       const remaining = Math.max(0, target - done);
                       const registeredDate = registrationDates.get(company.id) || "";
-                      const sortDetail = companySort === "age-bands" ? COMPANY_AGE_BANDS.find(band => band.key === companyAgeBand(company)).label : companySort === "region" ? company.region || "지역 X" : ageSort ? companyFoundedSortKey(company) ? `설립 ${company.foundedDate}` : companyAgeGroup(company) : "";
+                      const sortDetail = companySort === "age-bands" ? secondary ? companyBusinessAgeLabel(company.foundedDate, company.age) : COMPANY_BOARD_BANDS.find(band => band.key === companyBoardBand(company)).label : companySort === "region" ? company.region || "지역 X" : ageSort ? companyFoundedSortKey(company) ? `설립 ${company.foundedDate}` : companyAgeGroup(company) : "";
                       return <tr key={company.id} data-status-company-id={company.id} data-company-type={type} className={`${secondary ? "status-secondary" : ""} ${secondaryStart ? "status-secondary-start" : ""} ${companyEmphasis(company)}`}>
                         <td className="status-number">{index + 1}</td>
                         <td className="status-company-cell"><div className="status-company-label"><span>{company.name}</span>{secondary && <span className="status-company-type">{COMPANY_TYPE_OPTIONS.find(option => option.value === type).label}</span>}</div>{sortDetail && <span className="status-company-sort-detail">{sortDetail}</span>}</td>
