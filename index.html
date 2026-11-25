@@ -4692,13 +4692,14 @@
         return sortScheduleItems(schedules.filter((item) => item.date === todayKey())).map((item) => {
           const company = companies.find((target) => target.id === item.companyId);
           if (!company) return "";
+          const meetingKind = item.type === "meeting" ? normalizeScheduleKind(item.kind) || "meeting" : "";
+          const hours = String(company.name || "").replace(/\s+/g, "") === "포켓데이" ? "1h" : meetingKind === "meeting" ? "1.5h" : "4h";
           if (item.type === "meeting") {
-            const meetingKind = normalizeScheduleKind(item.kind) || "meeting";
-            return `${company.name} / ${meetingKind === "work" ? (item.title || "작업") : scheduleKindLabel(meetingKind)} 4h`;
+            return `${company.name} / ${meetingKind === "work" ? (item.title || "작업") : scheduleKindLabel(meetingKind)} ${hours}`;
           }
           const grant = grantMap[item.grantId];
           if (!grant) return "";
-          return `${company.name} / ${grant.title} 4h`;
+          return `${company.name} / ${grant.title} ${hours}`;
         }).filter(Boolean).join("\n");
       }
       async function copyTodaySchedules() {
