@@ -4689,7 +4689,7 @@
         copyPlainText(grantCopyText(grant), "지원사업 정보 복사됨");
       }
       function todayScheduleCopyText() {
-        return sortScheduleItems(schedules.filter((item) => item.date === todayKey())).map((item) => {
+        const lines = sortScheduleItems(schedules.filter((item) => item.date === todayKey())).map((item) => {
           const company = companies.find((target) => target.id === item.companyId);
           if (!company) return "";
           const meetingKind = item.type === "meeting" ? normalizeScheduleKind(item.kind) || "meeting" : "";
@@ -4700,7 +4700,8 @@
           const grant = grantMap[item.grantId];
           if (!grant) return "";
           return `${company.name} / ${grant.title} ${hours}`;
-        }).filter(Boolean).join("\n");
+        }).filter(Boolean);
+        return lines.length ? ["금일 일정입니다", ...lines].join("\n") : "";
       }
       async function copyTodaySchedules() {
         const text = todayScheduleCopyText();
